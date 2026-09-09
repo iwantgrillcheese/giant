@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0b0e13" />
+  <title>Priceboard — odds, edge & promos</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">PRICE SHOPPER</div>
+        <h1>Priceboard</h1>
+        <p class="sub">One screen for sportsbook + prediction-market prices, fair value, and promo value.</p>
+      </div>
+      <div class="status" id="statusPill">Loading…</div>
+    </header>
+
+    <nav class="tabs" aria-label="Primary">
+      <button class="tab active" data-tab="board">Best prices</button>
+      <button class="tab" data-tab="promos">Promos</button>
+      <button class="tab" data-tab="learn">Probability lab</button>
+    </nav>
+
+    <main>
+      <section id="board" class="panel tabpanel active">
+        <div class="controls">
+          <label>League
+            <select id="league">
+              <option>NFL</option><option>NBA</option><option>MLB</option><option>NHL</option><option>NCAAF</option><option>NCAAB</option>
+            </select>
+          </label>
+          <label>View
+            <select id="marketFilter">
+              <option value="all">All markets</option>
+              <option value="moneyline">Moneyline</option>
+              <option value="spread">Spread</option>
+              <option value="total">Totals</option>
+              <option value="prop">Props / other</option>
+            </select>
+          </label>
+          <label class="grow">Search
+            <input id="search" placeholder="team, market, side…" />
+          </label>
+          <button id="refresh" class="primary">Refresh</button>
+        </div>
+
+        <div id="demoNotice" class="notice hidden"></div>
+
+        <div class="sectionHead">
+          <div>
+            <h2>Who's most generous?</h2>
+            <p>Price index compares each venue's offered payout with the best available payout on markets it carries. 100 = tied for best every time.</p>
+          </div>
+        </div>
+        <div id="venueCards" class="cards"></div>
+
+        <div class="sectionHead rowHead">
+          <div>
+            <h2>Best-price board</h2>
+            <p>Only compare identical outcomes and lines. Different settlement rules can make apparently similar bets non-equivalent.</p>
+          </div>
+          <div id="rowCount" class="muted"></div>
+        </div>
+        <div id="boardRows" class="boardRows"></div>
+      </section>
+
+      <section id="promos" class="panel tabpanel">
+        <div class="sectionHead">
+          <div>
+            <h2>Promo wallet</h2>
+            <p>Track promos you are actually eligible for. The ranking uses your estimated cash-conversion rate, not the headline marketing number.</p>
+          </div>
+        </div>
+        <form id="promoForm" class="promoForm">
+          <label>Venue<input name="venue" required placeholder="FanDuel" /></label>
+          <label>Promo type
+            <select name="type"><option>Bonus bet</option><option>Profit boost</option><option>Deposit match</option><option>Odds boost</option><option>Other</option></select>
+          </label>
+          <label>Face value ($)<input name="face" type="number" min="0" step="0.01" value="50" /></label>
+          <label>Est. cash conversion (%)<input name="conversion" type="number" min="0" max="100" step="1" value="70" /></label>
+          <label>Rollover / playthrough (x)<input name="rollover" type="number" min="1" step="0.1" value="1" /></label>
+          <label>Expires<input name="expires" type="date" /></label>
+          <label class="wide">Terms / note<input name="note" placeholder="Min -200, max $25 stake, opt-in required…" /></label>
+          <button class="primary" type="submit">Add promo</button>
+        </form>
+        <div class="promoMath">Rough cash value = face value × conversion rate ÷ rollover. For boosts, enter your own conservative cash-equivalent face value.</div>
+        <div id="promoList" class="promoList"></div>
+      </section>
+
+      <section id="learn" class="panel tabpanel">
+        <div class="learnHero">
+          <div>
+            <div class="eyebrow">THE 80/20</div>
+            <h2>Learn enough probability to see the business differently.</h2>
+            <p>You do not need calculus. Nail implied probability, de-vigging, EV, correlation, and calibration. Those five concepts explain a huge amount of sportsbook pricing, trading, CRM, and promo economics.</p>
+          </div>
+          <div class="formula">Edge = your fair probability − market break-even probability</div>
+        </div>
+
+        <div class="labGrid">
+          <article class="labCard">
+            <h3>Odds → probability</h3>
+            <label>American odds<input id="oddsInput" type="number" value="-110" /></label>
+            <div class="bigResult" id="oddsResult"></div>
+          </article>
+          <article class="labCard">
+            <h3>Probability → fair odds</h3>
+            <label>True probability (%)<input id="probInput" type="number" min="0.01" max="99.99" step="0.1" value="50" /></label>
+            <div class="bigResult" id="probResult"></div>
+          </article>
+          <article class="labCard">
+            <h3>Two-way vig / de-vig</h3>
+            <div class="two"><label>Side A<input id="vigA" type="number" value="-110" /></label><label>Side B<input id="vigB" type="number" value="-110" /></label></div>
+            <div class="bigResult" id="vigResult"></div>
+          </article>
+          <article class="labCard">
+            <h3>Expected value</h3>
+            <div class="two"><label>Offered odds<input id="evOdds" type="number" value="120" /></label><label>Your fair P (%)<input id="evProb" type="number" value="48" /></label></div>
+            <div class="bigResult" id="evResult"></div>
+          </article>
+          <article class="labCard wideCard">
+            <h3>Parlay probability</h3>
+            <label>Independent leg probabilities, comma separated (%)<input id="parlayInput" value="65,48,61,79" /></label>
+            <div class="bigResult" id="parlayResult"></div>
+            <p class="muted">Only multiply directly when the legs are independent. Same-game legs can be correlated.</p>
+          </article>
+        </div>
+
+        <div class="curriculum">
+          <h3>What I'd actually learn for a FanDuel career</h3>
+          <ol>
+            <li><b>Implied probability & odds conversion.</b> Translate +150 / -200 / 40¢ into the same mental language.</li>
+            <li><b>Vig, hold & de-vigging.</b> Understand where operator margin lives and how price quality changes by market.</li>
+            <li><b>Expected value.</b> Separate a good outcome from a good decision.</li>
+            <li><b>Variance & sample size.</b> Know why short-term results are noisy and why segmentation can lie.</li>
+            <li><b>Correlation & conditional probability.</b> Critical for SGPs, cross-sell, and customer behavior.</li>
+            <li><b>Calibration.</b> If you say 60% repeatedly, does it actually happen ~60% of the time?</li>
+            <li><b>Then optional:</b> Bayes, Kelly sizing, regression. Useful, but not where I'd start.</li>
+          </ol>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
