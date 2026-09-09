@@ -1,4 +1,5 @@
 import { fetchBoard, isAuthorized } from './_shared.mjs';
+import { fetchKalshiNFLRows } from './_kalshi.mjs';
 
 function compactRow(r) {
   return {
@@ -110,7 +111,7 @@ function fallbackAnswer(rows, message) {
   if (isThanks(message)) return "Yep. Throw me the next one whenever.";
 
   if (!rows.length) {
-    return `I'm not seeing that team/player in the live feed right now. If you paste the price you're seeing — like “Chargers 58¢” — I can still sanity-check it against the sportsbook side.`;
+    return `I'm not seeing that team/player in the live feeds right now. If you paste the price you're seeing — like “Chargers 58¢” — I can still sanity-check it against anything else I have.`;
   }
 
   const offered = quotedPrice(message);
@@ -168,7 +169,7 @@ async function llmAnswer({ message, history, portfolio, markets }) {
 
   const system = `You are Giant, the user's NFL prediction-market buddy. Talk like a smart friend watching football on the couch, not a quant terminal, financial adviser, or compliance memo. Be casual, useful, and concise. Contractions are good. The user can trade prediction markets; sportsbooks are reference pricing only.
 
-Use only the supplied live market data for prices. Never invent a market, quote, injury, news item, probability, or edge. If relevant live market data is empty, do not talk about some unrelated game. Just say you aren't seeing that team/player in the feed right now and ask for the price the user sees. A reference probability is a rough sanity check, not truth. Only compare prices when the supplied data says the line is comparable.
+Use only the supplied live market data for prices. Never invent a market, quote, injury, news item, probability, or edge. Direct Kalshi prices are real prediction-market prices and can be discussed even when no sportsbook reference is available. If relevant live market data is empty, do not talk about some unrelated game. Just say you aren't seeing that team/player in the feeds right now and ask for the price the user sees. A reference probability is a rough sanity check, not truth. Only compare prices when the supplied data says the line is comparable.
 
 When asked for the best way to play a team, compare the relevant moneyline/spread/props you actually have and say which one you'd look at first and why. Keep it in plain English. Do not suggest a dollar stake or bankroll percentage unless the user explicitly asks how much to bet. Mention the user's existing bets only when they are directly relevant to the thing being discussed. Do not over-warn or moralize. Avoid words like executable, benchmarkProbability, lineComparable, model edge, or alpha unless asked. Do not use Markdown formatting or asterisks. Most answers should be 2-5 sentences.`;
 
@@ -217,13 +218,20 @@ export async function POST(request) {
     const url = new URL(request.url);
     url.search = '';
     url.searchParams.set('league', 'NFL');
-    url.searchParams.set('limit', '50');
-    const board = await fetchBoard(url);
+    url.searchParams.set('limit', '100');
 
-    let relevant = selectRelevant(board.rows || [], message);
+    const [sgoResult, kalshiResult] = await Promise.allSettled([
+      fetchBoard(url),
+      fetchKalshiNFLRows()
+    ]);
+    const board = sgoResult.status === 'fulfilled' ? sgoResult.value : { rows: [], demo: false };
+    const kalshi = kalshiResult.status === 'fulfilled' ? kalshiResult.value : { rows: [] };
+    const allRows = [...(kalshi.rows || []), ...(board.rows || [])];
+
+    let relevant = selectRelevant(allRows, message);
     if (!relevant.length && isShortFollowup(message) && Array.isArray(body?.history)) {
       const lastUser = body.history.filter(x => x?.role === 'user').slice(-2).map(x => x.content).join(' ');
-      relevant = selectRelevant(board.rows || [], `${lastUser} ${message}`);
+      relevant = selectRelevant(allRows, `${lastUser} ${message}`);
     }
 
     let answer = null;
@@ -238,7 +246,18 @@ export async function POST(request) {
     }
     if (!answer) answer = fallbackAnswer(relevant, message);
 
-    return Response.json({ answer, mode, marketCount: relevant.length, totalMarketCount: board.rows?.length || 0, demo: board.demo }, { headers: { 'Cache-Control': 'no-store' } });
+    return Response.json({
+      answer,
+      mode,
+      marketCount: relevant.length,
+      totalMarketCount: allRows.length,
+      kalshiMarketCount: kalshi.rows?.length || 0,
+      demo: board.demo,
+      feedErrors: [
+        sgoResult.status === 'rejected' ? `SportsGameOdds: ${sgoResult.reason?.message || 'failed'}` : null,
+        kalshiResult.status === 'rejected' ? `Kalshi: ${kalshiResult.reason?.message || 'failed'}` : null
+      ].filter(Boolean)
+    }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     return Response.json({ error: error?.message || 'Failed to answer' }, { status: 500, headers: { 'Cache-Control': 'no-store' } });
   }
