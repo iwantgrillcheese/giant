@@ -21,6 +21,8 @@ function compactRow(r) {
     } : null,
     benchmarkProbability: r.benchmarkProbability,
     benchmarkSource: r.benchmarkSource,
+    benchmarkLine: r.benchmarkLine,
+    lineComparable: r.lineComparable,
     priceGap: r.priceGap,
     quotes: r.quotes.slice(0, 8).map(q => ({ venue: q.label, kind: q.kind, odds: q.odds, impliedProbability: q.implied, line: q.line }))
   };
@@ -63,11 +65,12 @@ function fallbackAnswer(rows, message) {
   const best = ranked[0];
   const side = best.side || best.stat || best.marketName;
   const gap = best.priceGap;
-  const gapText = Number.isFinite(gap) ? `${gap >= 0 ? '+' : ''}${(gap * 100).toFixed(1)} percentage points versus the benchmark` : 'no clean benchmark comparison';
-  let text = `For a simple way to express that view, the most interesting quote I can see is ${side} in ${best.eventName}: ${cents(best.bestPrediction.implied)} on ${best.bestPrediction.label}. `;
-  if (Number.isFinite(best.benchmarkProbability)) text += `Giant's reference benchmark is ${pct(best.benchmarkProbability)}, so that's ${gapText}. `;
-  text += `I would treat that as a price-shopping signal, not proof of true +EV — the benchmark can be wrong and settlement/fees can differ.`;
-  if (ranked[1]) text += `\n\nRunner-up: ${ranked[1].side || ranked[1].marketName} at ${cents(ranked[1].bestPrediction.implied)} on ${ranked[1].bestPrediction.label}.`;
+  const gapText = Number.isFinite(gap) ? `${gap >= 0 ? '+' : ''}${(gap * 100).toFixed(1)} percentage points versus the benchmark` : 'no clean apples-to-apples benchmark comparison';
+  let text = `For a simple way to express that view, the most interesting price I can see is ${side} in ${best.eventName}: ${cents(best.bestPrediction.implied)} on ${best.bestPrediction.label}. `;
+  if (Number.isFinite(best.benchmarkProbability) && Number.isFinite(gap)) text += `Giant's reference benchmark is ${pct(best.benchmarkProbability)}, so that's ${gapText}. `;
+  else text += `I don't have a clean same-line benchmark comparison for this quote. `;
+  text += `Treat that as price-shopping context, not proof of true +EV — the benchmark can be wrong and settlement/fees can differ.`;
+  if (ranked[1]) text += `\n\nAnother price to inspect: ${ranked[1].side || ranked[1].marketName} at ${cents(ranked[1].bestPrediction.implied)} on ${ranked[1].bestPrediction.label}.`;
   return text;
 }
 
@@ -86,7 +89,7 @@ async function llmAnswer({ message, history, portfolio, markets }) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
 
-  const system = `You are Giant, a personal NFL prediction-market trading copilot. The user trades prediction markets for fun and wants to make disciplined, price-aware decisions; sportsbooks are reference pricing only, not executable for this user. Answer conversationally and directly. Use only the supplied live market data for prices. Never invent a market, quote, injury, news item, true probability, or edge. A benchmark is not ground truth. Prefer prediction-market execution when available. Explain cents/probabilities plainly. When asked for the "best bet" or "best trade", compare the relevant supplied markets and recommend at most 1-3 options, with why. Mention meaningful caveats about fees, liquidity, or settlement only when relevant. Do not act like a quant terminal. Do not use sportsbook recommendations as executable bets. Keep most answers under 250 words.`;
+  const system = `You are Giant, a personal NFL prediction-market price-analysis copilot. The user can trade prediction markets; sportsbooks are reference pricing only, not executable for this user. Answer conversationally and directly. Use only the supplied live market data for prices. Never invent a market, quote, injury, news item, true probability, or edge. A benchmark is not ground truth. Only compare a prediction price to a benchmark when lineComparable is true; never compare different spread or total lines as if they are the same contract. When the user asks for the "best bet" or "best trade", identify at most 1-3 supplied prediction-market options that look most price-attractive and explain why, without telling the user how much to wager or executing anything. Explain cents/probabilities plainly. Mention meaningful caveats about fees, liquidity, or settlement only when relevant. Do not act like a quant terminal. Do not use sportsbook recommendations as executable bets. Keep most answers under 250 words.`;
 
   const prior = Array.isArray(history) ? history.slice(-6).map(x => ({ role: x.role === 'assistant' ? 'assistant' : 'user', content: String(x.content || '').slice(0, 1200) })) : [];
   const input = [
