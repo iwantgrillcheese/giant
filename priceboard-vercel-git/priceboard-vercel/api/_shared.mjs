@@ -82,6 +82,11 @@ function isSportsbookQuote(q) {
   return /sportsbook|sharp book/i.test(q?.kind || '');
 }
 
+function sameLine(a, b) {
+  if (a == null || b == null) return true;
+  return Math.abs(Number(a) - Number(b)) < 0.001;
+}
+
 function normalizeEvents(payload) {
   const events = Array.isArray(payload?.data) ? payload.data : [];
   const rows = [];
@@ -134,8 +139,10 @@ function normalizeEvents(payload) {
       const benchmarkSource = fairProbability != null
         ? 'SportsGameOdds fair-price estimate'
         : (sportsbookMedian != null ? `Median of ${sportsbookQuotes.length} sportsbook quote${sportsbookQuotes.length === 1 ? '' : 's'} (not de-vigged)` : null);
-      const priceGap = bestPrediction && benchmarkProbability != null ? benchmarkProbability - bestPrediction.implied : null;
       const fairLine = finiteNumber(market?.fairSpread) ?? finiteNumber(market?.fairOverUnder);
+      const benchmarkLine = fairLine ?? bestSportsbook?.line ?? null;
+      const lineComparable = bestPrediction ? sameLine(bestPrediction.line, benchmarkLine) : false;
+      const priceGap = bestPrediction && benchmarkProbability != null && lineComparable ? benchmarkProbability - bestPrediction.implied : null;
       const line = bestPrediction?.line ?? bestSportsbook?.line ?? best?.line ?? fairLine;
 
       rows.push({
@@ -153,6 +160,8 @@ function normalizeEvents(payload) {
         fairLine,
         benchmarkProbability,
         benchmarkSource,
+        benchmarkLine,
+        lineComparable,
         line,
         best,
         bestPrediction,
