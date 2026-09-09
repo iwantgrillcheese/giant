@@ -247,9 +247,17 @@ export async function fetchBoard(url) {
   const endpoint = new URL('https://api.sportsgameodds.com/v2/events');
   endpoint.searchParams.set('leagueID', league);
   endpoint.searchParams.set('oddsAvailable', 'true');
+  endpoint.searchParams.set('ended', 'false');
   endpoint.searchParams.set('limit', String(limit));
-  endpoint.searchParams.set('live', String(live));
-  endpoint.searchParams.set('started', live ? 'true' : 'false');
+  endpoint.searchParams.set('includeAltLines', 'true');
+
+  if (live) {
+    endpoint.searchParams.set('live', 'true');
+  } else {
+    const now = Date.now();
+    endpoint.searchParams.set('startsAfter', new Date(now - 6 * 60 * 60 * 1000).toISOString());
+    endpoint.searchParams.set('startsBefore', new Date(now + 10 * 24 * 60 * 60 * 1000).toISOString());
+  }
 
   const response = await fetch(endpoint, {
     headers: { 'x-api-key': apiKey, accept: 'application/json' }
