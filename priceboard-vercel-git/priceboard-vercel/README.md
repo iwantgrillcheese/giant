@@ -1,67 +1,48 @@
-# Priceboard
+# Giant
 
-Vercel-ready odds comparison MVP for sportsbook, exchange, and prediction-market prices.
+Giant is a personal NFL prediction-market trading copilot. It is prediction-market first: sportsbooks are used as a pricing reference layer, while the UI is built around finding executable prediction-market prices, understanding what they imply, and tracking a simple trading book.
 
-## What it does
+## V1
 
-- Compares matching outcomes across sportsbooks, exchanges, and prediction markets.
-- Highlights the best quoted price.
-- Converts prices to break-even probabilities.
-- Uses the data feed's `fairOdds` benchmark to estimate EV when available.
-- Ranks venues with a simple price generosity index.
-- Includes a manual promo wallet stored in browser local storage.
-- Includes a probability lab for odds conversion, de-vigging, EV, and parlay math.
-- Falls back to demo data when no API key is configured.
+- Conversational `Ask Giant` interface for requests like “I want to trade the Chargers. What seems like the best bet?”
+- Live NFL market feed through SportsGameOdds.
+- Prediction-market quotes surfaced ahead of sportsbook reference prices.
+- A simple benchmark / price-gap comparison. Benchmarks are estimates, not true probabilities.
+- Manual account balances, open exposure, positions, realized P&L, and marked P&L.
+- Probability lab for odds, implied probability, de-vigging, and prediction-contract payouts.
+- Optional OpenAI LLM layer. If no OpenAI key is configured, Giant falls back to a deterministic market-comparison rules engine rather than failing.
+- Optional access code to protect the API endpoints on a personal deployment.
+
+## Environment variables
+
+```bash
+SPORTSGAMEODDS_API_KEY=your_sgo_key
+OPENAI_API_KEY=your_openai_key          # optional, enables full conversational answers
+OPENAI_MODEL=gpt-5.6-luna              # optional
+GIANT_ACCESS_CODE=your_private_code     # optional
+```
+
+If `GIANT_ACCESS_CODE` is set in Vercel, open Giant → Settings and save the same code in the browser. It is stored only in localStorage and sent as the `x-giant-code` header.
 
 ## Deploy to Vercel
 
-1. Push this repository to GitHub, GitLab, or Bitbucket.
-2. In Vercel, create a new project and import the repository.
-3. Add the environment variable:
-
-   `SPORTSGAMEODDS_API_KEY=your_key_here`
-
-4. Deploy.
-
-The frontend is static and the live odds adapter runs as Vercel Functions under `/api`.
-
-## Local development
-
-The easiest way to reproduce Vercel locally is with the Vercel CLI:
-
-```bash
-npm i -g vercel
-vercel dev
-```
-
-For live data, create `.env.local`:
-
-```bash
-SPORTSGAMEODDS_API_KEY=your_key_here
-```
-
-Without the key, the app runs in demo mode.
-
-## Repository structure
+The Vercel project should use this folder as its project root:
 
 ```text
-.
-├── index.html
-├── app.js
-├── styles.css
-├── api/
-│   ├── _shared.mjs
-│   ├── board.mjs
-│   └── health.mjs
-├── .env.example
-├── .gitignore
-├── package.json
-└── vercel.json
+priceboard-vercel-git/priceboard-vercel
 ```
 
-## Notes
+The frontend is static HTML/CSS/JS. Server-side functions live under `/api`, so private API keys are never shipped to the browser.
 
-- Best price comparisons are only meaningful for the same outcome, line, period, and settlement rules.
-- Exchange fees and bid/ask execution can change realized value; venue-specific fee normalization is a logical next upgrade.
-- Fair odds are estimates, not ground truth.
-- Promo valuation is intentionally manual because eligibility and terms are often account-specific.
+## API
+
+- `GET /api/health` — feed/LLM configuration status
+- `GET /api/board?league=NFL&limit=30` — normalized market board
+- `POST /api/ask` — conversational market analysis using the current live board
+
+## Important interpretation notes
+
+- A prediction-market quote and sportsbook bet may have different settlement rules or fees even when they look similar.
+- The SportsGameOdds `fairOdds` field is used as the preferred benchmark when present. Otherwise Giant can show a sportsbook quote median as context, which is explicitly labeled as not de-vigged.
+- A gap versus a benchmark is a price-shopping signal, not proof that the contract is +EV or that Giant knows the true probability.
+- P&L is kept separate from deposits and account balances.

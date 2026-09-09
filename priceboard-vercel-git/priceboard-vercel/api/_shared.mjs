@@ -9,6 +9,19 @@ function americanToProb(odds) {
   return d ? 1 / d : null;
 }
 
+function finiteNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function median(values) {
+  const xs = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!xs.length) return null;
+  const mid = Math.floor(xs.length / 2);
+  return xs.length % 2 ? xs[mid] : (xs[mid - 1] + xs[mid]) / 2;
+}
+
 function normalizeBookKey(key = '') {
   return String(key).toLowerCase().replace(/[^a-z0-9]/g, '');
 }
@@ -42,11 +55,11 @@ function prettyBook(key) {
 
 function getQuoteOdds(q) {
   if (q == null) return null;
-  if (typeof q === 'string' || typeof q === 'number') return Number(q);
+  if (typeof q === 'string' || typeof q === 'number') return finiteNumber(q);
   const candidates = [q.odds, q.price, q.americanOdds, q.bookOdds];
   for (const c of candidates) {
-    const n = Number(c);
-    if (Number.isFinite(n) && n !== 0) return n;
+    const n = finiteNumber(c);
+    if (n !== null && n !== 0) return n;
   }
   return null;
 }
@@ -55,15 +68,29 @@ function getLine(q, market) {
   if (!q || typeof q !== 'object') return null;
   const candidates = [q.spread, q.overUnder, q.line, market?.fairSpread, market?.fairOverUnder];
   for (const c of candidates) {
-    const n = Number(c);
-    if (Number.isFinite(n)) return n;
+    const n = finiteNumber(c);
+    if (n !== null) return n;
   }
   return null;
+}
+
+function isPredictionQuote(q) {
+  return /prediction market|exchange/i.test(q?.kind || '');
+}
+
+function isSportsbookQuote(q) {
+  return /sportsbook|sharp book/i.test(q?.kind || '');
+}
+
+function sameLine(a, b) {
+  if (a == null || b == null) return true;
+  return Math.abs(Number(a) - Number(b)) < 0.001;
 }
 
 function normalizeEvents(payload) {
   const events = Array.isArray(payload?.data) ? payload.data : [];
   const rows = [];
+
   for (const event of events) {
     const home = event?.teams?.home?.name || event?.teams?.home?.names?.long || event?.homeTeam || 'Home';
     const away = event?.teams?.away?.name || event?.teams?.away?.names?.long || event?.awayTeam || 'Away';
@@ -75,6 +102,7 @@ function normalizeEvents(payload) {
     for (const [oddID, market] of Object.entries(markets)) {
       const byBookmaker = market?.byBookmaker && typeof market.byBookmaker === 'object' ? market.byBookmaker : {};
       const quotes = [];
+
       for (const [bookKey, q] of Object.entries(byBookmaker)) {
         if (q?.available === false) continue;
         const odds = getQuoteOdds(q);
@@ -94,13 +122,28 @@ function normalizeEvents(payload) {
           updatedAt: q?.lastUpdatedAt || q?.updatedAt || null
         });
       }
-      if (!quotes.length) continue;
 
+      if (!quotes.length) continue;
       quotes.sort((a, b) => b.odds - a.odds);
+
+      const predictionQuotes = quotes.filter(isPredictionQuote).sort((a, b) => a.implied - b.implied);
+      const sportsbookQuotes = quotes.filter(isSportsbookQuote);
+      const bestPrediction = predictionQuotes[0] || null;
+      const bestSportsbook = sportsbookQuotes.slice().sort((a, b) => b.odds - a.odds)[0] || null;
       const best = quotes[0];
-      const fairOdds = Number(market?.fairOdds);
-      const fairProbability = Number.isFinite(fairOdds) ? americanToProb(fairOdds) : null;
-      const ev = fairProbability && best.decimal ? fairProbability * best.decimal - 1 : null;
+
+      const fairOdds = finiteNumber(market?.fairOdds);
+      const fairProbability = fairOdds !== null && fairOdds !== 0 ? americanToProb(fairOdds) : null;
+      const sportsbookMedian = median(sportsbookQuotes.map(q => q.implied));
+      const benchmarkProbability = fairProbability ?? sportsbookMedian;
+      const benchmarkSource = fairProbability != null
+        ? 'SportsGameOdds fair-price estimate'
+        : (sportsbookMedian != null ? `Median of ${sportsbookQuotes.length} sportsbook quote${sportsbookQuotes.length === 1 ? '' : 's'} (not de-vigged)` : null);
+      const fairLine = finiteNumber(market?.fairSpread) ?? finiteNumber(market?.fairOverUnder);
+      const benchmarkLine = fairLine ?? bestSportsbook?.line ?? null;
+      const lineComparable = bestPrediction ? sameLine(bestPrediction.line, benchmarkLine) : false;
+      const priceGap = bestPrediction && benchmarkProbability != null && lineComparable ? benchmarkProbability - bestPrediction.implied : null;
+      const line = bestPrediction?.line ?? bestSportsbook?.line ?? best?.line ?? fairLine;
 
       rows.push({
         eventId,
@@ -112,72 +155,60 @@ function normalizeEvents(payload) {
         side: market?.sideID || market?.statEntityID || '',
         stat: market?.statID || '',
         period: market?.periodID || '',
-        fairOdds: Number.isFinite(fairOdds) ? fairOdds : null,
+        fairOdds,
         fairProbability,
-        fairLine: Number.isFinite(Number(market?.fairSpread))
-          ? Number(market.fairSpread)
-          : (Number.isFinite(Number(market?.fairOverUnder)) ? Number(market.fairOverUnder) : null),
+        fairLine,
+        benchmarkProbability,
+        benchmarkSource,
+        benchmarkLine,
+        lineComparable,
+        line,
         best,
-        ev,
+        bestPrediction,
+        bestSportsbook,
+        priceGap,
         quotes
       });
     }
   }
-  return rows;
+
+  return rows.sort((a, b) => {
+    const ap = a.bestPrediction ? 1 : 0;
+    const bp = b.bestPrediction ? 1 : 0;
+    if (ap !== bp) return bp - ap;
+    const ag = Number.isFinite(a.priceGap) ? Math.abs(a.priceGap) : -1;
+    const bg = Number.isFinite(b.priceGap) ? Math.abs(b.priceGap) : -1;
+    if (ag !== bg) return bg - ag;
+    return new Date(a.startTime || 0) - new Date(b.startTime || 0);
+  });
 }
 
 function demoPayload(league = 'NFL') {
   const now = Date.now();
   const mk = (oddID, marketName, sideID, fairOdds, quotes, extra = {}) => ({
-    oddID,
-    marketName,
-    sideID,
-    fairOdds: String(fairOdds),
-    ...extra,
-    byBookmaker: Object.fromEntries(
-      Object.entries(quotes).map(([k, v]) => [k, {
-        odds: String(v),
-        available: true,
-        lastUpdatedAt: new Date().toISOString()
-      }])
-    )
+    oddID, marketName, sideID, fairOdds: String(fairOdds), ...extra,
+    byBookmaker: Object.fromEntries(Object.entries(quotes).map(([k, v]) => [k, {
+      odds: String(v), available: true, lastUpdatedAt: new Date().toISOString()
+    }]))
   });
 
   return {
     demo: true,
     data: [
       {
-        eventID: 'demo-1',
-        leagueID: league,
-        startTime: new Date(now + 86400000).toISOString(),
+        eventID: 'demo-1', leagueID: league, startTime: new Date(now + 86400000).toISOString(),
         teams: { away: { name: 'San Francisco 49ers' }, home: { name: 'Los Angeles Rams' } },
         odds: {
-          'points-away-game-sp-away': mk(
-            'points-away-game-sp-away', 'Spread', 'away', -103,
-            { fanduel: -110, draftkings: -108, betmgm: -112, novig: 106, kalshi: 101, polymarket: 103 },
-            { fairSpread: '3.5' }
-          ),
-          'points-home-game-ml-home': mk(
-            'points-home-game-ml-home', 'Moneyline', 'home', -141,
-            { fanduel: -150, draftkings: -148, betmgm: -155, novig: -139, kalshi: -143, polymarket: -140 }
-          )
+          'points-away-game-sp-away': mk('points-away-game-sp-away', 'Spread', '49ers', -103, { fanduel: -110, draftkings: -108, betmgm: -112, novig: 106, kalshi: 101, polymarket: 103 }, { fairSpread: '3.5' }),
+          'points-home-game-ml-home': mk('points-home-game-ml-home', 'Moneyline', 'Rams', -141, { fanduel: -150, draftkings: -148, betmgm: -155, novig: -139, kalshi: -143, polymarket: -140 })
         }
       },
       {
-        eventID: 'demo-2',
-        leagueID: league,
-        startTime: new Date(now + 2 * 86400000).toISOString(),
-        teams: { away: { name: 'Buffalo Bills' }, home: { name: 'Houston Texans' } },
+        eventID: 'demo-2', leagueID: league, startTime: new Date(now + 2 * 86400000).toISOString(),
+        teams: { away: { name: 'Los Angeles Chargers' }, home: { name: 'Arizona Cardinals' } },
         odds: {
-          'points-home-game-ml-home': mk(
-            'points-home-game-ml-home', 'Moneyline', 'home', 104,
-            { fanduel: -102, draftkings: 100, betmgm: -105, novig: 108, kalshi: 105, polymarket: 106 }
-          ),
-          'points-all-game-ou-over': mk(
-            'points-all-game-ou-over', 'Total', 'over', -104,
-            { fanduel: -110, draftkings: -105, betmgm: -112, novig: 102, kalshi: -101 },
-            { fairOverUnder: '47.5' }
-          )
+          'points-away-game-ml-away': mk('points-away-game-ml-away', 'Moneyline', 'Chargers', -116, { fanduel: -125, draftkings: -122, betmgm: -120, kalshi: -105, polymarket: -110 }),
+          'points-away-game-sp-away': mk('points-away-game-sp-away', 'Spread', 'Chargers', -106, { fanduel: -110, draftkings: -108, betmgm: -112, kalshi: 102, polymarket: 100 }, { fairSpread: '-2.5' })
         }
       }
     ]
@@ -223,7 +254,20 @@ export async function fetchBoard(url) {
   };
 }
 
+export function isAuthorized(request) {
+  const required = process.env.GIANT_ACCESS_CODE || '';
+  if (!required) return true;
+  return request.headers.get('x-giant-code') === required;
+}
+
 export function health() {
   const configured = Boolean(process.env.SPORTSGAMEODDS_API_KEY);
-  return { ok: true, configured, provider: configured ? 'SportsGameOdds' : 'Demo' };
+  return {
+    ok: true,
+    configured,
+    provider: configured ? 'SportsGameOdds' : 'Demo',
+    llmConfigured: Boolean(process.env.OPENAI_API_KEY),
+    llmModel: process.env.OPENAI_MODEL || 'gpt-5.6-luna',
+    accessProtected: Boolean(process.env.GIANT_ACCESS_CODE)
+  };
 }

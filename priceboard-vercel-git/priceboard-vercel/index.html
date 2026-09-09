@@ -3,147 +3,126 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#0b0e13" />
-  <title>Priceboard — odds, edge & promos</title>
+  <meta name="theme-color" content="#07090d" />
+  <title>Giant — NFL prediction-market copilot</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <div class="shell">
-    <header class="topbar">
-      <div>
-        <div class="eyebrow">PRICE SHOPPER</div>
-        <h1>Priceboard</h1>
-        <p class="sub">One screen for sportsbook + prediction-market prices, fair value, and promo value.</p>
+  <div class="appShell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brandMark">G</span><span>GIANT</span></div>
+      <nav class="sideNav" aria-label="Primary navigation">
+        <button class="navItem active" data-tab="ask"><span>⌁</span>Ask Giant</button>
+        <button class="navItem" data-tab="markets"><span>↗</span>Markets</button>
+        <button class="navItem" data-tab="portfolio"><span>◫</span>Portfolio</button>
+        <button class="navItem" data-tab="lab"><span>∿</span>Probability lab</button>
+      </nav>
+      <div class="sideFoot">
+        <div class="feedStatus"><span class="statusDot"></span><span id="feedStatus">Connecting…</span></div>
+        <button class="textButton" id="settingsButton">Settings</button>
       </div>
-      <div class="status" id="statusPill">Loading…</div>
-    </header>
+    </aside>
 
-    <nav class="tabs" aria-label="Primary">
-      <button class="tab active" data-tab="board">Best prices</button>
-      <button class="tab" data-tab="promos">Promos</button>
-      <button class="tab" data-tab="learn">Probability lab</button>
-    </nav>
+    <main class="main">
+      <header class="mobileHeader"><div class="brand"><span class="brandMark">G</span><span>GIANT</span></div><button id="mobileSettings" class="iconButton">⚙</button></header>
 
-    <main>
-      <section id="board" class="panel tabpanel active">
+      <section class="view active" id="ask">
+        <div class="hero">
+          <div class="kicker">NFL TRADING COPILOT</div>
+          <h1>What do you want exposure to?</h1>
+          <p>Ask in plain English. Giant shops prediction markets, uses sportsbooks as a reference, and tells you what looks interesting.</p>
+        </div>
+
+        <div class="portfolioStrip" id="portfolioStrip">
+          <div><span>Total bankroll</span><strong id="heroBankroll">$0</strong></div>
+          <div><span>Open exposure</span><strong id="heroExposure">$0</strong></div>
+          <div><span>Realized P&amp;L</span><strong id="heroPnl">$0</strong></div>
+        </div>
+
+        <div id="conversation" class="conversation"></div>
+
+        <div class="composerWrap">
+          <form id="askForm" class="composer">
+            <textarea id="askInput" rows="1" placeholder="I want to trade the Chargers. What seems like the best bet?" maxlength="1200"></textarea>
+            <button type="submit" class="sendButton" aria-label="Send">↑</button>
+          </form>
+          <div class="suggestions">
+            <button data-prompt="I want to trade the Chargers. What seems like the best bet?">Best Chargers trade</button>
+            <button data-prompt="Find me the most interesting NFL prediction-market price this week.">Find something interesting</button>
+            <button data-prompt="Where does the prediction market disagree most with the sportsbook benchmark?">Biggest disagreement</button>
+          </div>
+          <p class="finePrint">Giant compares prices; it does not know the true probability of an outcome. Check fees and settlement rules before trading.</p>
+        </div>
+      </section>
+
+      <section class="view" id="markets">
+        <div class="pageHead"><div><div class="kicker">LIVE BOARD</div><h2>NFL markets</h2><p>Prediction markets are executable; sportsbooks are shown as pricing reference.</p></div><button id="refresh" class="button secondary">Refresh</button></div>
         <div class="controls">
-          <label>League
-            <select id="league">
-              <option>NFL</option><option>NBA</option><option>MLB</option><option>NHL</option><option>NCAAF</option><option>NCAAB</option>
-            </select>
-          </label>
-          <label>View
-            <select id="marketFilter">
-              <option value="all">All markets</option>
-              <option value="moneyline">Moneyline</option>
-              <option value="spread">Spread</option>
-              <option value="total">Totals</option>
-              <option value="prop">Props / other</option>
-            </select>
-          </label>
-          <label class="grow">Search
-            <input id="search" placeholder="team, market, side…" />
-          </label>
-          <button id="refresh" class="primary">Refresh</button>
+          <label class="grow">Search<input id="search" placeholder="Chargers, Herbert, total…" /></label>
+          <label>Market<select id="marketFilter"><option value="all">All markets</option><option value="moneyline">Moneyline</option><option value="spread">Spread</option><option value="total">Totals</option><option value="prop">Props / other</option></select></label>
+          <label>Show<select id="venueFilter"><option value="prediction">Prediction first</option><option value="all">All priced markets</option></select></label>
         </div>
-
         <div id="demoNotice" class="notice hidden"></div>
-
-        <div class="sectionHead">
-          <div>
-            <h2>Who's most generous?</h2>
-            <p>Price index compares each venue's offered payout with the best available payout on markets it carries. 100 = tied for best every time.</p>
-          </div>
-        </div>
-        <div id="venueCards" class="cards"></div>
-
-        <div class="sectionHead rowHead">
-          <div>
-            <h2>Best-price board</h2>
-            <p>Only compare identical outcomes and lines. Different settlement rules can make apparently similar bets non-equivalent.</p>
-          </div>
-          <div id="rowCount" class="muted"></div>
-        </div>
+        <div class="marketSummary"><div><span>Markets loaded</span><strong id="rowCount">—</strong></div><div><span>With prediction quotes</span><strong id="predictionCount">—</strong></div><div><span>Largest benchmark gap</span><strong id="largestGap">—</strong></div></div>
         <div id="boardRows" class="boardRows"></div>
       </section>
 
-      <section id="promos" class="panel tabpanel">
-        <div class="sectionHead">
-          <div>
-            <h2>Promo wallet</h2>
-            <p>Track promos you are actually eligible for. The ranking uses your estimated cash-conversion rate, not the headline marketing number.</p>
-          </div>
+      <section class="view" id="portfolio">
+        <div class="pageHead"><div><div class="kicker">YOUR BOOK</div><h2>Portfolio &amp; P&amp;L</h2><p>V1 is manual on purpose. Keep the ledger clean now; automate account connections later.</p></div></div>
+        <div class="metricGrid">
+          <article><span>Account balances</span><strong id="metricBankroll">$0</strong></article>
+          <article><span>Open exposure</span><strong id="metricExposure">$0</strong></article>
+          <article><span>Realized P&amp;L</span><strong id="metricPnl">$0</strong></article>
+          <article><span>Open positions</span><strong id="metricOpen">0</strong></article>
         </div>
-        <form id="promoForm" class="promoForm">
-          <label>Venue<input name="venue" required placeholder="FanDuel" /></label>
-          <label>Promo type
-            <select name="type"><option>Bonus bet</option><option>Profit boost</option><option>Deposit match</option><option>Odds boost</option><option>Other</option></select>
-          </label>
-          <label>Face value ($)<input name="face" type="number" min="0" step="0.01" value="50" /></label>
-          <label>Est. cash conversion (%)<input name="conversion" type="number" min="0" max="100" step="1" value="70" /></label>
-          <label>Rollover / playthrough (x)<input name="rollover" type="number" min="1" step="0.1" value="1" /></label>
-          <label>Expires<input name="expires" type="date" /></label>
-          <label class="wide">Terms / note<input name="note" placeholder="Min -200, max $25 stake, opt-in required…" /></label>
-          <button class="primary" type="submit">Add promo</button>
-        </form>
-        <div class="promoMath">Rough cash value = face value × conversion rate ÷ rollover. For boosts, enter your own conservative cash-equivalent face value.</div>
-        <div id="promoList" class="promoList"></div>
+
+        <div class="portfolioGrid">
+          <section class="card">
+            <div class="cardHead"><div><h3>Accounts</h3><p>Manual balances by venue.</p></div></div>
+            <form id="accountForm" class="inlineForm"><input name="venue" placeholder="Kalshi" required /><input name="balance" type="number" step="0.01" placeholder="Balance" required /><button class="button" type="submit">Save</button></form>
+            <div id="accountList" class="list"></div>
+          </section>
+
+          <section class="card">
+            <div class="cardHead"><div><h3>Log a position</h3><p>For YES or NO contracts, enter the price you paid for that side.</p></div></div>
+            <form id="positionForm" class="positionForm">
+              <label>Venue<input name="venue" required placeholder="Kalshi" /></label>
+              <label>Position<input name="description" required placeholder="Chargers YES" /></label>
+              <label>Contracts<input name="contracts" required type="number" min="0.01" step="0.01" placeholder="100" /></label>
+              <label>Entry price (¢)<input name="entry" required type="number" min="0" max="100" step="0.1" placeholder="46" /></label>
+              <label>Current / exit (¢)<input name="mark" type="number" min="0" max="100" step="0.1" placeholder="Leave blank if open" /></label>
+              <label>Fees ($)<input name="fees" type="number" min="0" step="0.01" value="0" /></label>
+              <label>Status<select name="status"><option value="open">Open</option><option value="closed">Closed / settled</option></select></label>
+              <button class="button" type="submit">Add position</button>
+            </form>
+          </section>
+        </div>
+
+        <section class="card positionsCard"><div class="cardHead"><div><h3>Positions</h3><p>P&amp;L = contracts × (current/exit price − entry price) − fees.</p></div></div><div id="positionList" class="positionList"></div></section>
       </section>
 
-      <section id="learn" class="panel tabpanel">
-        <div class="learnHero">
-          <div>
-            <div class="eyebrow">THE 80/20</div>
-            <h2>Learn enough probability to see the business differently.</h2>
-            <p>You do not need calculus. Nail implied probability, de-vigging, EV, correlation, and calibration. Those five concepts explain a huge amount of sportsbook pricing, trading, CRM, and promo economics.</p>
-          </div>
-          <div class="formula">Edge = your fair probability − market break-even probability</div>
-        </div>
-
+      <section class="view" id="lab">
+        <div class="pageHead"><div><div class="kicker">THE USEFUL MATH</div><h2>Probability lab</h2><p>You don't need to be a quant. These are the conversions worth having at your fingertips.</p></div></div>
         <div class="labGrid">
-          <article class="labCard">
-            <h3>Odds → probability</h3>
-            <label>American odds<input id="oddsInput" type="number" value="-110" /></label>
-            <div class="bigResult" id="oddsResult"></div>
-          </article>
-          <article class="labCard">
-            <h3>Probability → fair odds</h3>
-            <label>True probability (%)<input id="probInput" type="number" min="0.01" max="99.99" step="0.1" value="50" /></label>
-            <div class="bigResult" id="probResult"></div>
-          </article>
-          <article class="labCard">
-            <h3>Two-way vig / de-vig</h3>
-            <div class="two"><label>Side A<input id="vigA" type="number" value="-110" /></label><label>Side B<input id="vigB" type="number" value="-110" /></label></div>
-            <div class="bigResult" id="vigResult"></div>
-          </article>
-          <article class="labCard">
-            <h3>Expected value</h3>
-            <div class="two"><label>Offered odds<input id="evOdds" type="number" value="120" /></label><label>Your fair P (%)<input id="evProb" type="number" value="48" /></label></div>
-            <div class="bigResult" id="evResult"></div>
-          </article>
-          <article class="labCard wideCard">
-            <h3>Parlay probability</h3>
-            <label>Independent leg probabilities, comma separated (%)<input id="parlayInput" value="65,48,61,79" /></label>
-            <div class="bigResult" id="parlayResult"></div>
-            <p class="muted">Only multiply directly when the legs are independent. Same-game legs can be correlated.</p>
-          </article>
-        </div>
-
-        <div class="curriculum">
-          <h3>What I'd actually learn for a FanDuel career</h3>
-          <ol>
-            <li><b>Implied probability & odds conversion.</b> Translate +150 / -200 / 40¢ into the same mental language.</li>
-            <li><b>Vig, hold & de-vigging.</b> Understand where operator margin lives and how price quality changes by market.</li>
-            <li><b>Expected value.</b> Separate a good outcome from a good decision.</li>
-            <li><b>Variance & sample size.</b> Know why short-term results are noisy and why segmentation can lie.</li>
-            <li><b>Correlation & conditional probability.</b> Critical for SGPs, cross-sell, and customer behavior.</li>
-            <li><b>Calibration.</b> If you say 60% repeatedly, does it actually happen ~60% of the time?</li>
-            <li><b>Then optional:</b> Bayes, Kelly sizing, regression. Useful, but not where I'd start.</li>
-          </ol>
+          <article class="card labCard"><h3>American odds → probability</h3><label>Odds<input id="oddsInput" type="number" value="-110" /></label><div class="bigResult" id="oddsResult"></div></article>
+          <article class="card labCard"><h3>Probability → fair odds</h3><label>Probability (%)<input id="probInput" type="number" value="50" min="0.1" max="99.9" step="0.1" /></label><div class="bigResult" id="probResult"></div></article>
+          <article class="card labCard"><h3>Two-way de-vig</h3><div class="two"><label>Side A<input id="vigA" type="number" value="-110" /></label><label>Side B<input id="vigB" type="number" value="-110" /></label></div><div class="bigResult" id="vigResult"></div></article>
+          <article class="card labCard"><h3>Contract payout</h3><div class="two"><label>Buy price (¢)<input id="contractPrice" type="number" value="46" min="1" max="99" /></label><label>Spend ($)<input id="contractSpend" type="number" value="100" min="1" /></label></div><div class="bigResult" id="contractResult"></div></article>
         </div>
       </section>
     </main>
   </div>
+
+  <dialog id="settingsDialog">
+    <form method="dialog" class="settingsCard">
+      <div class="cardHead"><div><div class="kicker">SETTINGS</div><h3>Giant access</h3></div><button class="iconButton" value="cancel">×</button></div>
+      <p>If you set <code>GIANT_ACCESS_CODE</code> in Vercel, save the same code here. It stays only in this browser.</p>
+      <label>Access code<input id="accessCode" type="password" autocomplete="off" placeholder="Optional" /></label>
+      <div class="settingsStatus" id="llmStatus">LLM status unknown</div>
+      <button class="button" id="saveSettings" value="default">Save</button>
+    </form>
+  </dialog>
+
   <script type="module" src="/app.js"></script>
 </body>
 </html>
