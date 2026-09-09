@@ -41,7 +41,7 @@ const bookMeta = {
   kalshi: { label: 'Kalshi', kind: 'Prediction market' },
   polymarket: { label: 'Polymarket', kind: 'Prediction market' },
   polymarketus: { label: 'Polymarket US', kind: 'Prediction market' },
-  novig: { label: 'Novig', kind: 'Exchange' },
+  novig: { label: 'Novig', kind: 'Prediction market' },
   prophetx: { label: 'ProphetX', kind: 'Exchange' }
 };
 
@@ -85,6 +85,24 @@ function isSportsbookQuote(q) {
 function sameLine(a, b) {
   if (a == null || b == null) return true;
   return Math.abs(Number(a) - Number(b)) < 0.001;
+}
+
+function displaySide(market, home, away) {
+  const raw = String(market?.sideID || '').toLowerCase();
+  if (raw === 'home') return home;
+  if (raw === 'away') return away;
+  if (raw === 'over') return 'Over';
+  if (raw === 'under') return 'Under';
+  if (raw && !['all', 'both', 'either'].includes(raw)) return market.sideID;
+
+  const entity = market?.statEntity?.name
+    || market?.statEntityName
+    || market?.playerName
+    || market?.participantName
+    || market?.selectionName
+    || market?.statEntityID;
+  if (entity) return entity;
+  return market?.sideID || '';
 }
 
 function normalizeEvents(payload) {
@@ -152,7 +170,7 @@ function normalizeEvents(payload) {
         league: event?.leagueID || event?.league || '',
         oddID,
         marketName: market?.marketName || market?.betTypeID || oddID,
-        side: market?.sideID || market?.statEntityID || '',
+        side: displaySide(market, home, away),
         stat: market?.statID || '',
         period: market?.periodID || '',
         fairOdds,
@@ -199,16 +217,16 @@ function demoPayload(league = 'NFL') {
         eventID: 'demo-1', leagueID: league, startTime: new Date(now + 86400000).toISOString(),
         teams: { away: { name: 'San Francisco 49ers' }, home: { name: 'Los Angeles Rams' } },
         odds: {
-          'points-away-game-sp-away': mk('points-away-game-sp-away', 'Spread', '49ers', -103, { fanduel: -110, draftkings: -108, betmgm: -112, novig: 106, kalshi: 101, polymarket: 103 }, { fairSpread: '3.5' }),
-          'points-home-game-ml-home': mk('points-home-game-ml-home', 'Moneyline', 'Rams', -141, { fanduel: -150, draftkings: -148, betmgm: -155, novig: -139, kalshi: -143, polymarket: -140 })
+          'points-away-game-sp-away': mk('points-away-game-sp-away', 'Spread', 'away', -103, { fanduel: -110, draftkings: -108, betmgm: -112, novig: 106, kalshi: 101, polymarket: 103 }, { fairSpread: '3.5' }),
+          'points-home-game-ml-home': mk('points-home-game-ml-home', 'Moneyline', 'home', -141, { fanduel: -150, draftkings: -148, betmgm: -155, novig: -139, kalshi: -143, polymarket: -140 })
         }
       },
       {
         eventID: 'demo-2', leagueID: league, startTime: new Date(now + 2 * 86400000).toISOString(),
         teams: { away: { name: 'Los Angeles Chargers' }, home: { name: 'Arizona Cardinals' } },
         odds: {
-          'points-away-game-ml-away': mk('points-away-game-ml-away', 'Moneyline', 'Chargers', -116, { fanduel: -125, draftkings: -122, betmgm: -120, kalshi: -105, polymarket: -110 }),
-          'points-away-game-sp-away': mk('points-away-game-sp-away', 'Spread', 'Chargers', -106, { fanduel: -110, draftkings: -108, betmgm: -112, kalshi: 102, polymarket: 100 }, { fairSpread: '-2.5' })
+          'points-away-game-ml-away': mk('points-away-game-ml-away', 'Moneyline', 'away', -116, { fanduel: -125, draftkings: -122, betmgm: -120, kalshi: -105, polymarket: -110 }),
+          'points-away-game-sp-away': mk('points-away-game-sp-away', 'Spread', 'away', -106, { fanduel: -110, draftkings: -108, betmgm: -112, kalshi: 102, polymarket: 100 }, { fairSpread: '-2.5' })
         }
       }
     ]

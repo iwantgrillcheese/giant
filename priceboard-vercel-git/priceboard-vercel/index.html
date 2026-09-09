@@ -4,8 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#07090d" />
-  <title>Giant — NFL prediction-market copilot</title>
+  <title>Giant — NFL trading copilot</title>
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/v2.css" />
 </head>
 <body>
   <div class="appShell">
@@ -14,8 +15,8 @@
       <nav class="sideNav" aria-label="Primary navigation">
         <button class="navItem active" data-tab="ask"><span>⌁</span>Ask Giant</button>
         <button class="navItem" data-tab="markets"><span>↗</span>Markets</button>
-        <button class="navItem" data-tab="portfolio"><span>◫</span>Portfolio</button>
-        <button class="navItem" data-tab="lab"><span>∿</span>Probability lab</button>
+        <button class="navItem" data-tab="portfolio"><span>◫</span>Your bets</button>
+        <button class="navItem" data-tab="lab"><span>∿</span>Quick math</button>
       </nav>
       <div class="sideFoot">
         <div class="feedStatus"><span class="statusDot"></span><span id="feedStatus">Connecting…</span></div>
@@ -29,85 +30,84 @@
       <section class="view active" id="ask">
         <div class="hero">
           <div class="kicker">NFL TRADING COPILOT</div>
-          <h1>What do you want exposure to?</h1>
-          <p>Ask in plain English. Giant shops prediction markets, uses sportsbooks as a reference, and tells you what looks interesting.</p>
+          <h1>What do you wanna bet?</h1>
+          <p>Tell Giant what you're thinking. It'll shop the market, sanity-check the price against the books, and tell you what looks good.</p>
         </div>
 
         <div class="portfolioStrip" id="portfolioStrip">
-          <div><span>Total bankroll</span><strong id="heroBankroll">$0</strong></div>
-          <div><span>Open exposure</span><strong id="heroExposure">$0</strong></div>
-          <div><span>Realized P&amp;L</span><strong id="heroPnl">$0</strong></div>
+          <div><span>Bankroll</span><strong id="heroBankroll">$0</strong></div>
+          <div><span>In play</span><strong id="heroExposure">$0</strong></div>
+          <div><span>P&amp;L</span><strong id="heroPnl">$0</strong></div>
         </div>
 
         <div id="conversation" class="conversation"></div>
 
         <div class="composerWrap">
           <form id="askForm" class="composer">
-            <textarea id="askInput" rows="1" placeholder="I want to trade the Chargers. What seems like the best bet?" maxlength="1200"></textarea>
+            <textarea id="askInput" rows="1" placeholder="I like the Chargers. What's the best way to play it?" maxlength="1200"></textarea>
             <button type="submit" class="sendButton" aria-label="Send">↑</button>
           </form>
           <div class="suggestions">
-            <button data-prompt="I want to trade the Chargers. What seems like the best bet?">Best Chargers trade</button>
-            <button data-prompt="Find me the most interesting NFL prediction-market price this week.">Find something interesting</button>
-            <button data-prompt="Where does the prediction market disagree most with the sportsbook benchmark?">Biggest disagreement</button>
+            <button data-prompt="I like the Chargers. What's the best way to play it?">I like the Chargers</button>
+            <button data-prompt="Find me something interesting in the NFL this week.">Find me something</button>
+            <button data-prompt="Where is the market most out of line with the books?">Biggest disagreement</button>
           </div>
-          <p class="finePrint">Giant compares prices; it does not know the true probability of an outcome. Check fees and settlement rules before trading.</p>
+          <p class="finePrint">Giant is a price check, not a crystal ball. Market references can be wrong too.</p>
         </div>
       </section>
 
       <section class="view" id="markets">
-        <div class="pageHead"><div><div class="kicker">LIVE BOARD</div><h2>NFL markets</h2><p>Prediction markets are executable; sportsbooks are shown as pricing reference.</p></div><button id="refresh" class="button secondary">Refresh</button></div>
+        <div class="pageHead"><div><div class="kicker">THE BOARD</div><h2>NFL markets</h2><p>Prediction markets first. Sportsbooks are just there to help answer: “is this price kinda good or kinda bad?”</p></div><button id="refresh" class="button secondary">Refresh</button></div>
         <div class="controls">
-          <label class="grow">Search<input id="search" placeholder="Chargers, Herbert, total…" /></label>
-          <label>Market<select id="marketFilter"><option value="all">All markets</option><option value="moneyline">Moneyline</option><option value="spread">Spread</option><option value="total">Totals</option><option value="prop">Props / other</option></select></label>
-          <label>Show<select id="venueFilter"><option value="prediction">Prediction first</option><option value="all">All priced markets</option></select></label>
+          <label class="grow">Search<input id="search" placeholder="Chargers, Olave, touchdowns…" /></label>
+          <label>Bet type<select id="marketFilter"><option value="all">Everything</option><option value="moneyline">Moneyline</option><option value="spread">Spread</option><option value="total">Totals</option><option value="prop">Props / other</option></select></label>
+          <label>Show<select id="venueFilter"><option value="prediction">Stuff I can trade</option><option value="all">Everything priced</option></select></label>
         </div>
         <div id="demoNotice" class="notice hidden"></div>
-        <div class="marketSummary"><div><span>Markets loaded</span><strong id="rowCount">—</strong></div><div><span>With prediction quotes</span><strong id="predictionCount">—</strong></div><div><span>Largest benchmark gap</span><strong id="largestGap">—</strong></div></div>
+        <div class="marketSummary"><div><span>Markets</span><strong id="rowCount">—</strong></div><div><span>Tradable quotes</span><strong id="predictionCount">—</strong></div><div><span>Biggest gap</span><strong id="largestGap">—</strong></div></div>
         <div id="boardRows" class="boardRows"></div>
       </section>
 
       <section class="view" id="portfolio">
-        <div class="pageHead"><div><div class="kicker">YOUR BOOK</div><h2>Portfolio &amp; P&amp;L</h2><p>V1 is manual on purpose. Keep the ledger clean now; automate account connections later.</p></div></div>
+        <div class="pageHead"><div><div class="kicker">YOUR STUFF</div><h2>Your bets</h2><p>Keep it stupid simple: what did you bet, how much did you risk, and how much does it win?</p></div></div>
         <div class="metricGrid">
-          <article><span>Account balances</span><strong id="metricBankroll">$0</strong></article>
-          <article><span>Open exposure</span><strong id="metricExposure">$0</strong></article>
-          <article><span>Realized P&amp;L</span><strong id="metricPnl">$0</strong></article>
-          <article><span>Open positions</span><strong id="metricOpen">0</strong></article>
+          <article><span>Balance</span><strong id="metricBankroll">$0</strong></article>
+          <article><span>In play</span><strong id="metricExposure">$0</strong></article>
+          <article><span>P&amp;L</span><strong id="metricPnl">$0</strong></article>
+          <article><span>Open bets</span><strong id="metricOpen">0</strong></article>
         </div>
 
-        <div class="portfolioGrid">
+        <div class="portfolioGrid simplePortfolioGrid">
           <section class="card">
-            <div class="cardHead"><div><h3>Accounts</h3><p>Manual balances by venue.</p></div></div>
-            <form id="accountForm" class="inlineForm"><input name="venue" placeholder="Kalshi" required /><input name="balance" type="number" step="0.01" placeholder="Balance" required /><button class="button" type="submit">Save</button></form>
+            <div class="cardHead"><div><h3>Balances</h3><p>What you've got sitting on each app.</p></div></div>
+            <form id="accountForm" class="inlineForm"><input name="venue" placeholder="Novig" required /><input name="balance" type="number" step="0.01" placeholder="Balance" required /><button class="button" type="submit">Save</button></form>
             <div id="accountList" class="list"></div>
           </section>
 
           <section class="card">
-            <div class="cardHead"><div><h3>Log a position</h3><p>For YES or NO contracts, enter the price you paid for that side.</p></div></div>
-            <form id="positionForm" class="positionForm">
-              <label>Venue<input name="venue" required placeholder="Kalshi" /></label>
-              <label>Position<input name="description" required placeholder="Chargers YES" /></label>
-              <label>Contracts<input name="contracts" required type="number" min="0.01" step="0.01" placeholder="100" /></label>
-              <label>Entry price (¢)<input name="entry" required type="number" min="0" max="100" step="0.1" placeholder="46" /></label>
-              <label>Current / exit (¢)<input name="mark" type="number" min="0" max="100" step="0.1" placeholder="Leave blank if open" /></label>
-              <label>Fees ($)<input name="fees" type="number" min="0" step="0.01" value="0" /></label>
-              <label>Status<select name="status"><option value="open">Open</option><option value="closed">Closed / settled</option></select></label>
-              <button class="button" type="submit">Add position</button>
+            <div class="cardHead"><div><h3>Add a bet</h3><p>Example: Chris Olave anytime TD — $5 to win $20.</p></div></div>
+            <form id="positionForm" class="positionForm simpleBetForm">
+              <label>Where<input name="venue" required placeholder="Novig" /></label>
+              <label>What'd you bet?<input name="description" required placeholder="Chris Olave anytime TD" /></label>
+              <label>You put up ($)<input name="stake" required type="number" min="0.01" step="0.01" placeholder="5" /></label>
+              <label>To win ($)<input name="toWin" required type="number" min="0.01" step="0.01" placeholder="20" /></label>
+              <label>Result<select name="result"><option value="open">Still open</option><option value="won">Won</option><option value="lost">Lost</option><option value="void">Void / push</option></select></label>
+              <button class="button" type="submit">Add bet</button>
             </form>
+            <p class="betHint">Giant will try to match it to the live board and give you a rough +EV / -EV read. If the match is sketchy, it won't guess.</p>
           </section>
         </div>
 
-        <section class="card positionsCard"><div class="cardHead"><div><h3>Positions</h3><p>P&amp;L = contracts × (current/exit price − entry price) − fees.</p></div></div><div id="positionList" class="positionList"></div></section>
+        <section class="card positionsCard"><div class="cardHead"><div><h3>Bets</h3><p>Open bets count toward “in play.” A win adds the profit; a loss subtracts what you risked.</p></div></div><div id="positionList" class="positionList"></div></section>
       </section>
 
       <section class="view" id="lab">
-        <div class="pageHead"><div><div class="kicker">THE USEFUL MATH</div><h2>Probability lab</h2><p>You don't need to be a quant. These are the conversions worth having at your fingertips.</p></div></div>
+        <div class="pageHead"><div><div class="kicker">THE ONLY MATH YOU NEED</div><h2>Quick math</h2><p>No quant cosplay. Just the conversions that are actually useful when you're looking at a price.</p></div></div>
         <div class="labGrid">
-          <article class="card labCard"><h3>American odds → probability</h3><label>Odds<input id="oddsInput" type="number" value="-110" /></label><div class="bigResult" id="oddsResult"></div></article>
-          <article class="card labCard"><h3>Probability → fair odds</h3><label>Probability (%)<input id="probInput" type="number" value="50" min="0.1" max="99.9" step="0.1" /></label><div class="bigResult" id="probResult"></div></article>
-          <article class="card labCard"><h3>Two-way de-vig</h3><div class="two"><label>Side A<input id="vigA" type="number" value="-110" /></label><label>Side B<input id="vigB" type="number" value="-110" /></label></div><div class="bigResult" id="vigResult"></div></article>
-          <article class="card labCard"><h3>Contract payout</h3><div class="two"><label>Buy price (¢)<input id="contractPrice" type="number" value="46" min="1" max="99" /></label><label>Spend ($)<input id="contractSpend" type="number" value="100" min="1" /></label></div><div class="bigResult" id="contractResult"></div></article>
+          <article class="card labCard"><h3>Odds → chance</h3><label>American odds<input id="oddsInput" type="number" value="-110" /></label><div class="bigResult" id="oddsResult"></div></article>
+          <article class="card labCard"><h3>Chance → fair odds</h3><label>Probability (%)<input id="probInput" type="number" value="50" min="0.1" max="99.9" step="0.1" /></label><div class="bigResult" id="probResult"></div></article>
+          <article class="card labCard"><h3>Take the vig out</h3><div class="two"><label>Side A<input id="vigA" type="number" value="-110" /></label><label>Side B<input id="vigB" type="number" value="-110" /></label></div><div class="bigResult" id="vigResult"></div></article>
+          <article class="card labCard"><h3>Prediction-market payout</h3><div class="two"><label>Price (¢)<input id="contractPrice" type="number" value="46" min="1" max="99" /></label><label>Spend ($)<input id="contractSpend" type="number" value="100" min="1" /></label></div><div class="bigResult" id="contractResult"></div></article>
         </div>
       </section>
     </main>
@@ -115,10 +115,10 @@
 
   <dialog id="settingsDialog">
     <form method="dialog" class="settingsCard">
-      <div class="cardHead"><div><div class="kicker">SETTINGS</div><h3>Giant access</h3></div><button class="iconButton" value="cancel">×</button></div>
-      <p>If you set <code>GIANT_ACCESS_CODE</code> in Vercel, save the same code here. It stays only in this browser.</p>
+      <div class="cardHead"><div><div class="kicker">SETTINGS</div><h3>Giant</h3></div><button class="iconButton" value="cancel">×</button></div>
+      <p>If you set a private Giant access code in Vercel, put the same code here.</p>
       <label>Access code<input id="accessCode" type="password" autocomplete="off" placeholder="Optional" /></label>
-      <div class="settingsStatus" id="llmStatus">LLM status unknown</div>
+      <div class="settingsStatus" id="llmStatus">Checking chat…</div>
       <button class="button" id="saveSettings" value="default">Save</button>
     </form>
   </dialog>
