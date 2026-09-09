@@ -114,8 +114,9 @@ function normalizeEvents(payload) {
     const away = event?.teams?.away?.name || event?.teams?.away?.names?.long || event?.awayTeam || 'Away';
     const eventName = `${away} @ ${home}`;
     const eventId = event?.eventID || event?.id || eventName;
-    const startTime = event?.startTime || event?.startDate || null;
+    const startTime = event?.startTime || event?.startDate || event?.status?.startsAt || null;
     const markets = event?.odds && typeof event.odds === 'object' ? event.odds : {};
+    let eventRowCount = 0;
 
     for (const [oddID, market] of Object.entries(markets)) {
       const byBookmaker = market?.byBookmaker && typeof market.byBookmaker === 'object' ? market.byBookmaker : {};
@@ -187,6 +188,34 @@ function normalizeEvents(payload) {
         priceGap,
         quotes
       });
+      eventRowCount++;
+    }
+
+    if (eventRowCount === 0) {
+      rows.push({
+        eventId,
+        eventName,
+        startTime,
+        league: event?.leagueID || event?.league || '',
+        oddID: `${eventId}-game`,
+        marketName: 'Game',
+        side: '',
+        stat: '',
+        period: 'game',
+        fairOdds: null,
+        fairProbability: null,
+        fairLine: null,
+        benchmarkProbability: null,
+        benchmarkSource: null,
+        benchmarkLine: null,
+        lineComparable: false,
+        line: null,
+        best: null,
+        bestPrediction: null,
+        bestSportsbook: null,
+        priceGap: null,
+        quotes: []
+      });
     }
   }
 
@@ -236,7 +265,8 @@ function demoPayload(league = 'NFL') {
 export async function fetchBoard(url) {
   const league = (url.searchParams.get('league') || 'NFL').toUpperCase();
   const live = url.searchParams.get('live') === 'true';
-  const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit') || 12)));
+  const requestedLimit = Math.max(1, Number(url.searchParams.get('limit') || 100));
+  const limit = Math.min(500, Math.max(100, requestedLimit));
   const apiKey = process.env.SPORTSGAMEODDS_API_KEY || '';
 
   if (!apiKey) {
@@ -246,17 +276,21 @@ export async function fetchBoard(url) {
 
   const endpoint = new URL('https://api.sportsgameodds.com/v2/events');
   endpoint.searchParams.set('leagueID', league);
-  endpoint.searchParams.set('oddsAvailable', 'true');
-  endpoint.searchParams.set('ended', 'false');
+  endpoint.searchParams.set('type', 'match');
   endpoint.searchParams.set('limit', String(limit));
   endpoint.searchParams.set('includeAltLines', 'true');
+  endpoint.searchParams.set('cancelled', 'false');
 
   if (live) {
     endpoint.searchParams.set('live', 'true');
+    endpoint.searchParams.set('oddsAvailable', 'true');
   } else {
     const now = Date.now();
+    endpoint.searchParams.set('started', 'false');
+    endpoint.searchParams.set('finalized', 'false');
+    endpoint.searchParams.set('oddsPresent', 'true');
     endpoint.searchParams.set('startsAfter', new Date(now - 6 * 60 * 60 * 1000).toISOString());
-    endpoint.searchParams.set('startsBefore', new Date(now + 10 * 24 * 60 * 60 * 1000).toISOString());
+    endpoint.searchParams.set('startsBefore', new Date(now + 14 * 24 * 60 * 60 * 1000).toISOString());
   }
 
   const response = await fetch(endpoint, {
@@ -276,6 +310,7 @@ export async function fetchBoard(url) {
     demo: false,
     provider: 'SportsGameOdds',
     league,
+    sourceEventCount: Array.isArray(payload?.data) ? payload.data.length : 0,
     nextCursor: payload?.nextCursor || null
   };
 }
