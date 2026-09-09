@@ -1,5 +1,11 @@
 const BASE = 'https://external-api.kalshi.com/trade-api/v2';
 
+const NFL_SERIES = [
+  ['KXNFLGAME', 'Moneyline'],
+  ['KXNFLSPREAD', 'Spread'],
+  ['KXNFLTOTAL', 'Total']
+];
+
 function num(v) {
   if (v === null || v === undefined || v === '') return null;
   const n = Number(v);
@@ -20,39 +26,63 @@ async function getJSON(url) {
   return data;
 }
 
-function marketToRow(event, market, milestone) {
-  const yesAsk = num(market?.yes_ask_dollars);
-  const last = num(market?.last_price_dollars);
-  const yesBid = num(market?.yes_bid_dollars);
-  const price = yesAsk ?? last ?? yesBid;
+function bestBuyPrice(market) {
+  return num(market?.yes_ask_dollars) ?? num(market?.last_price_dollars) ?? num(market?.yes_bid_dollars);
+}
+
+function marketTime(market) {
+  return market?.occurrence_datetime || market?.expected_expiration_time || market?.close_time || market?.open_time || null;
+}
+
+function withinUpcomingWindow(market) {
+  const t = Date.parse(marketTime(market) || '');
+  if (!Number.isFinite(t)) return true;
+  const now = Date.now();
+  return t >= now - 6 * 60 * 60 * 1000 && t <= now + 14 * 24 * 60 * 60 * 1000;
+}
+
+function displayLine(market, marketName) {
+  if (marketName === 'Moneyline') return null;
+  const explicit = num(market?.floor_strike) ?? num(market?.cap_strike);
+  if (explicit != null) return explicit;
+  const text = `${market?.yes_sub_title || ''} ${market?.title || ''}`;
+  const m = text.match(/(-?\d+(?:\.\d+)?)\s*(?:points?|pts?)?/i);
+  return m ? Number(m[1]) : null;
+}
+
+function marketToRow(market, marketName) {
+  const price = bestBuyPrice(market);
   if (!(price > 0 && price < 1)) return null;
 
-  const side = market?.yes_sub_title || market?.subtitle || market?.title || event?.title || 'YES';
-  const eventName = event?.title || milestone?.title || market?.title || market?.event_ticker || 'Kalshi market';
-  const marketName = market?.title || market?.subtitle || 'Prediction market';
-  const startTime = milestone?.start_date || market?.occurrence_datetime || event?.strike_date || market?.open_time || null;
+  const yesBid = num(market?.yes_bid_dollars);
+  const yesAsk = num(market?.yes_ask_dollars);
+  const side = market?.yes_sub_title || market?.subtitle || market?.title || 'YES';
+  const eventName = market?.title || market?.subtitle || market?.event_ticker || 'Kalshi NFL market';
+  const startTime = marketTime(market);
+  const line = displayLine(market, marketName);
   const odds = probToAmerican(price);
   const quote = {
     key: 'kalshi-direct',
     label: 'Kalshi',
     kind: 'Prediction market',
     odds,
-    decimal: price ? 1 / price : null,
+    decimal: 1 / price,
     implied: price,
-    line: null,
+    line,
     deeplink: market?.ticker ? `https://kalshi.com/markets/${market.ticker}` : null,
     updatedAt: market?.updated_time || null,
     bid: yesBid,
     ask: yesAsk,
-    volume: num(market?.volume_24h_fp) ?? num(market?.volume_fp)
+    volume: num(market?.volume_24h_fp) ?? num(market?.volume_fp),
+    liquidity: num(market?.liquidity_dollars)
   };
 
   return {
-    eventId: `kalshi:${event?.event_ticker || market?.event_ticker || market?.ticker}`,
+    eventId: `kalshi:${market?.event_ticker || market?.ticker}`,
     eventName,
     startTime,
     league: 'NFL',
-    oddID: `kalshi:${market?.ticker || marketName}`,
+    oddID: `kalshi:${market?.ticker || eventName}`,
     marketName,
     side,
     stat: '',
@@ -64,7 +94,7 @@ function marketToRow(event, market, milestone) {
     benchmarkSource: null,
     benchmarkLine: null,
     lineComparable: false,
-    line: null,
+    line,
     best: quote,
     bestPrediction: quote,
     bestSportsbook: null,
@@ -74,45 +104,51 @@ function marketToRow(event, market, milestone) {
   };
 }
 
-export async function fetchKalshiNFLRows() {
-  const now = Date.now();
-  const max = now + 14 * 24 * 60 * 60 * 1000;
-  const milestonesURL = new URL(`${BASE}/milestones`);
-  milestonesURL.searchParams.set('limit', '100');
-  milestonesURL.searchParams.set('minimum_start_date', new Date(now - 6 * 60 * 60 * 1000).toISOString());
-  milestonesURL.searchParams.set('category', 'Sports');
-  milestonesURL.searchParams.set('competition', 'Pro Football');
-  milestonesURL.searchParams.set('type', 'football_game');
+async function fetchSeriesMarkets(seriesTicker, marketName) {
+  const rows = [];
+  let cursor = '';
 
-  const milestoneData = await getJSON(milestonesURL);
-  const milestones = (milestoneData?.milestones || []).filter(m => {
-    const t = Date.parse(m?.start_date || '');
-    return !Number.isFinite(t) || t <= max;
-  });
+  for (let page = 0; page < 3; page++) {
+    const u = new URL(`${BASE}/markets`);
+    u.searchParams.set('series_ticker', seriesTicker);
+    u.searchParams.set('status', 'open');
+    u.searchParams.set('mve_filter', 'exclude');
+    u.searchParams.set('limit', '1000');
+    if (cursor) u.searchParams.set('cursor', cursor);
 
-  const tickerMap = new Map();
-  for (const milestone of milestones) {
-    const tickers = [
-      ...(Array.isArray(milestone?.primary_event_tickers) ? milestone.primary_event_tickers : []),
-      ...(Array.isArray(milestone?.related_event_tickers) ? milestone.related_event_tickers : [])
-    ];
-    for (const ticker of tickers) if (ticker && !tickerMap.has(ticker)) tickerMap.set(ticker, milestone);
+    const data = await getJSON(u);
+    const markets = Array.isArray(data?.markets) ? data.markets : [];
+    for (const market of markets) {
+      if (!withinUpcomingWindow(market)) continue;
+      const row = marketToRow(market, marketName);
+      if (row) rows.push(row);
+    }
+
+    cursor = data?.cursor || '';
+    if (!cursor || markets.length === 0) break;
   }
 
-  const entries = [...tickerMap.entries()].slice(0, 40);
-  const responses = await Promise.allSettled(entries.map(async ([ticker, milestone]) => {
-    const u = new URL(`${BASE}/events/${encodeURIComponent(ticker)}`);
-    u.searchParams.set('with_nested_markets', 'true');
-    const data = await getJSON(u);
-    const event = data?.event || {};
-    const markets = Array.isArray(event?.markets) ? event.markets : (Array.isArray(data?.markets) ? data.markets : []);
-    return markets.map(m => marketToRow(event, m, milestone)).filter(Boolean);
-  }));
+  return rows;
+}
 
-  const rows = responses.flatMap(r => r.status === 'fulfilled' ? r.value : []);
+export async function fetchKalshiNFLRows() {
+  const results = await Promise.allSettled(
+    NFL_SERIES.map(([seriesTicker, marketName]) => fetchSeriesMarkets(seriesTicker, marketName))
+  );
+
+  const rows = results.flatMap(r => r.status === 'fulfilled' ? r.value : []);
+  const deduped = [...new Map(rows.map(r => [r.oddID, r])).values()];
+
+  if (!deduped.length) {
+    const errors = results
+      .filter(r => r.status === 'rejected')
+      .map(r => r.reason?.message || 'Kalshi series request failed');
+    throw new Error(errors.join(' | ') || 'Kalshi returned no open NFL game markets');
+  }
+
   return {
-    rows,
-    milestoneCount: milestones.length,
-    eventCount: entries.length
+    rows: deduped,
+    eventCount: new Set(deduped.map(r => r.eventId)).size,
+    seriesCount: results.filter(r => r.status === 'fulfilled').length
   };
 }

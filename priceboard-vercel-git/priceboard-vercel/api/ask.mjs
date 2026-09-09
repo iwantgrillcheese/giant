@@ -48,6 +48,10 @@ function isDiscovery(text = '') {
   return /find me|something interesting|anything good|what should i|best value|biggest disagreement|where.*disagree|what looks good|show me.*market/i.test(text);
 }
 
+function isSlateRequest(text = '') {
+  return /all nfl.*lines|all.*nfl.*games|what nfl games|show me.*nfl|full slate|whole slate|all game lines/i.test(text);
+}
+
 function selectRelevant(rows, text) {
   const tokens = tokenize(text);
   const scored = rows.map(r => {
@@ -70,11 +74,11 @@ function selectRelevant(rows, text) {
 
   const directMatches = scored.filter(x => x.hits > 0 || x.score >= 8);
   if (directMatches.length) {
-    return directMatches.sort((a, b) => b.score - a.score).slice(0, 24).map(x => x.r);
+    return directMatches.sort((a, b) => b.score - a.score).slice(0, 30).map(x => x.r);
   }
 
   if (isDiscovery(text) || tokens.length === 0) {
-    return scored.sort((a, b) => b.score - a.score).slice(0, 24).map(x => x.r);
+    return scored.sort((a, b) => b.score - a.score).slice(0, 30).map(x => x.r);
   }
 
   return [];
@@ -169,19 +173,19 @@ async function llmAnswer({ message, history, portfolio, markets }) {
 
   const system = `You are Giant, the user's NFL prediction-market buddy. Talk like a smart friend watching football on the couch, not a quant terminal, financial adviser, or compliance memo. Be casual, useful, and concise. Contractions are good. The user can trade prediction markets; sportsbooks are reference pricing only.
 
-Use only the supplied live market data for prices. Never invent a market, quote, injury, news item, probability, or edge. Direct Kalshi prices are real prediction-market prices and can be discussed even when no sportsbook reference is available. If relevant live market data is empty, do not talk about some unrelated game. Just say you aren't seeing that team/player in the feeds right now and ask for the price the user sees. A reference probability is a rough sanity check, not truth. Only compare prices when the supplied data says the line is comparable.
+Use only the CURRENT supplied live market data for prices and market availability. Never treat anything a previous assistant message said as market data; old assistant replies can be stale or wrong. Never invent a market, quote, injury, news item, probability, or edge. Direct Kalshi prices are real prediction-market prices and can be discussed even when no sportsbook reference is available. If relevant live market data is empty, do not talk about some unrelated game. A reference probability is a rough sanity check, not truth. Only compare prices when the supplied data says the line is comparable.
 
 When asked for the best way to play a team, compare the relevant moneyline/spread/props you actually have and say which one you'd look at first and why. Keep it in plain English. Do not suggest a dollar stake or bankroll percentage unless the user explicitly asks how much to bet. Mention the user's existing bets only when they are directly relevant to the thing being discussed. Do not over-warn or moralize. Avoid words like executable, benchmarkProbability, lineComparable, model edge, or alpha unless asked. Do not use Markdown formatting or asterisks. Most answers should be 2-5 sentences.`;
 
   const prior = Array.isArray(history)
-    ? history.slice(-8).map(x => ({ role: x.role === 'assistant' ? 'assistant' : 'user', content: String(x.content || '').slice(0, 1200) }))
+    ? history.filter(x => x?.role === 'user').slice(-6).map(x => ({ role: 'user', content: String(x.content || '').slice(0, 1200) }))
     : [];
   const positions = Array.isArray(portfolio?.positions)
     ? portfolio.positions.slice(-20).map(p => ({ bet: p.description, venue: p.venue, stake: p.stake, toWin: p.toWin, result: p.result }))
     : [];
   const input = [
     ...prior,
-    { role: 'user', content: `Current request: ${message}\n\nUser's book:\n${JSON.stringify({ bankroll: portfolio?.bankroll || 0, inPlay: portfolio?.exposure || 0, pnl: portfolio?.realized || 0, openBets: portfolio?.openCount || 0, positions })}\n\nRelevant live market data:\n${JSON.stringify(markets.map(compactRow))}` }
+    { role: 'user', content: `Current request: ${message}\n\nUser's book:\n${JSON.stringify({ bankroll: portfolio?.bankroll || 0, inPlay: portfolio?.exposure || 0, pnl: portfolio?.realized || 0, openBets: portfolio?.openCount || 0, positions })}\n\nCURRENT relevant live market data:\n${JSON.stringify(markets.map(compactRow))}` }
   ];
 
   const r = await fetch('https://api.openai.com/v1/responses', {
@@ -228,7 +232,7 @@ export async function POST(request) {
     const kalshi = kalshiResult.status === 'fulfilled' ? kalshiResult.value : { rows: [] };
     const allRows = [...(kalshi.rows || []), ...(board.rows || [])];
 
-    let relevant = selectRelevant(allRows, message);
+    let relevant = isSlateRequest(message) ? allRows.slice(0, 60) : selectRelevant(allRows, message);
     if (!relevant.length && isShortFollowup(message) && Array.isArray(body?.history)) {
       const lastUser = body.history.filter(x => x?.role === 'user').slice(-2).map(x => x.content).join(' ');
       relevant = selectRelevant(allRows, `${lastUser} ${message}`);
@@ -252,6 +256,7 @@ export async function POST(request) {
       marketCount: relevant.length,
       totalMarketCount: allRows.length,
       kalshiMarketCount: kalshi.rows?.length || 0,
+      kalshiEventCount: kalshi.eventCount || 0,
       demo: board.demo,
       feedErrors: [
         sgoResult.status === 'rejected' ? `SportsGameOdds: ${sgoResult.reason?.message || 'failed'}` : null,
