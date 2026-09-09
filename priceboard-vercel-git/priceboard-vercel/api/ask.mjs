@@ -44,6 +44,16 @@ function tokenize(text = '') {
   return normalizeText(text).split(/\s+/).filter(x => x.length > 2 && !stop.has(x));
 }
 
+const contextNoise = new Set([
+  'moneyline','spread','total','over','under','touchdown','odds','line','lines','prop','props',
+  'who','they','them','their','there','he','him','his','she','her','it','its','opponent','matchup',
+  'playing','plays','played','said','just','again','current','right','now','next','week','same','one'
+]);
+
+function hasIdentitySignal(text = '') {
+  return tokenize(text).some(t => !contextNoise.has(t));
+}
+
 function isDiscovery(text = '') {
   return /find me|something interesting|anything good|what should i|best value|biggest disagreement|where.*disagree|what looks good|show me.*market/i.test(text);
 }
@@ -84,6 +94,24 @@ function selectRelevant(rows, text) {
   return [];
 }
 
+function conversationContext(rows, history = []) {
+  if (!Array.isArray(history) || !rows.length) return null;
+  const recent = history.slice(-12).reverse();
+
+  for (const item of recent) {
+    const text = String(item?.content || '').trim();
+    if (!text || !hasIdentitySignal(text)) continue;
+    const matches = selectRelevant(rows, text);
+    if (!matches.length) continue;
+    const eventName = matches[0]?.eventName;
+    if (!eventName) continue;
+    const eventRows = rows.filter(r => r.eventName === eventName);
+    if (eventRows.length) return { eventName, rows: eventRows };
+  }
+
+  return null;
+}
+
 function cents(p) { return Number.isFinite(p) ? `${(p * 100).toFixed(1)}¢` : '—'; }
 function pct(p) { return Number.isFinite(p) ? `${(p * 100).toFixed(1)}%` : '—'; }
 
@@ -116,6 +144,11 @@ function fallbackAnswer(rows, message) {
 
   if (!rows.length) {
     return `I'm not seeing that team/player in the live feeds right now. If you paste the price you're seeing — like “Chargers 58¢” — I can still sanity-check it against anything else I have.`;
+  }
+
+  if (/who.*play|who.*playing|opponent|matchup/i.test(message)) {
+    const r = rows[0];
+    return `The matchup I have in the live feed is ${r.eventName}${r.startTime ? `, starting ${new Date(r.startTime).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles', timeZoneName: 'short' })}` : ''}.`;
   }
 
   const offered = quotedPrice(message);
@@ -173,13 +206,22 @@ async function llmAnswer({ message, history, portfolio, markets }) {
 
   const system = `You are Giant, the user's NFL prediction-market buddy. Talk like a smart friend watching football on the couch, not a quant terminal, financial adviser, or compliance memo. Be casual, useful, and concise. Contractions are good. The user can trade prediction markets; sportsbooks are reference pricing only.
 
-Use only the CURRENT supplied live market data for prices and market availability. Never treat anything a previous assistant message said as market data; old assistant replies can be stale or wrong. Never invent a market, quote, injury, news item, probability, or edge. Direct Kalshi prices are real prediction-market prices and can be discussed even when no sportsbook reference is available. If relevant live market data is empty, do not talk about some unrelated game. A reference probability is a rough sanity check, not truth. Only compare prices when the supplied data says the line is comparable.
+This is a real conversation, so keep track of what the user and Giant were just talking about. Resolve follow-ups like “what's the moneyline?”, “what about the spread?”, “him?”, “that one?”, and “who do they play?” from the recent conversation. Do not randomly switch to a different team or game. If you previously established a matchup and the CURRENT supplied data still supports it, stay consistent.
+
+Use only the CURRENT supplied live market data for factual claims about matchup/opponent, start time, prices, and market availability. Conversation history is for reference resolution and continuity, not a source of live facts. Never use model memory to invent an NFL schedule, opponent, quote, injury, news item, probability, or edge. If history conflicts with the current data, current data wins and you should say so plainly. If current live data includes the team/game being discussed, never say you cannot see it. Direct Kalshi prices are real prediction-market prices and can be discussed even when no sportsbook reference is available. If relevant live market data is empty, do not talk about some unrelated game. A reference probability is a rough sanity check, not truth. Only compare prices when the supplied data says the line is comparable.
 
 When asked for the best way to play a team, compare the relevant moneyline/spread/props you actually have and say which one you'd look at first and why. Keep it in plain English. Do not suggest a dollar stake or bankroll percentage unless the user explicitly asks how much to bet. Mention the user's existing bets only when they are directly relevant to the thing being discussed. Do not over-warn or moralize. Avoid words like executable, benchmarkProbability, lineComparable, model edge, or alpha unless asked. Do not use Markdown formatting or asterisks. Most answers should be 2-5 sentences.`;
 
-  const prior = Array.isArray(history)
-    ? history.filter(x => x?.role === 'user').slice(-6).map(x => ({ role: 'user', content: String(x.content || '').slice(0, 1200) }))
+  let prior = Array.isArray(history)
+    ? history
+        .filter(x => x?.role === 'user' || x?.role === 'assistant')
+        .slice(-12)
+        .map(x => ({ role: x.role, content: String(x.content || '').slice(0, 1200) }))
     : [];
+  if (prior.length && prior[prior.length - 1].role === 'user' && normalizeText(prior[prior.length - 1].content) === normalizeText(message)) {
+    prior = prior.slice(0, -1);
+  }
+
   const positions = Array.isArray(portfolio?.positions)
     ? portfolio.positions.slice(-20).map(p => ({ bet: p.description, venue: p.venue, stake: p.stake, toWin: p.toWin, result: p.result }))
     : [];
@@ -232,7 +274,25 @@ export async function POST(request) {
     const kalshi = kalshiResult.status === 'fulfilled' ? kalshiResult.value : { rows: [] };
     const allRows = [...(kalshi.rows || []), ...(board.rows || [])];
 
-    let relevant = isSlateRequest(message) ? allRows.slice(0, 60) : selectRelevant(allRows, message);
+    let relevant;
+    if (isSlateRequest(message)) {
+      relevant = allRows.slice(0, 60);
+    } else if (!hasIdentitySignal(message)) {
+      const context = conversationContext(allRows, body?.history);
+      relevant = context ? selectRelevant(context.rows, message) : selectRelevant(allRows, message);
+    } else {
+      relevant = selectRelevant(allRows, message);
+    }
+
+    if (!relevant.length && Array.isArray(body?.history)) {
+      const recentConversation = body.history
+        .slice(-8)
+        .map(x => String(x?.content || ''))
+        .filter(Boolean)
+        .join(' ');
+      relevant = selectRelevant(allRows, `${recentConversation} ${message}`);
+    }
+
     if (!relevant.length && isShortFollowup(message) && Array.isArray(body?.history)) {
       const lastUser = body.history.filter(x => x?.role === 'user').slice(-2).map(x => x.content).join(' ');
       relevant = selectRelevant(allRows, `${lastUser} ${message}`);
