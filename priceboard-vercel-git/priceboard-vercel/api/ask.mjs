@@ -39,8 +39,12 @@ function normalizeText(text = '') {
 }
 
 function tokenize(text = '') {
-  const stop = new Set(['i','a','an','the','on','to','for','of','in','and','or','what','whats','want','wanna','bet','trade','best','seems','like','me','my','this','that','game','nfl','prediction','market','markets','price','good','bad','think']);
+  const stop = new Set(['i','a','an','the','on','to','for','of','in','and','or','what','whats','want','wanna','bet','trade','best','seems','like','me','my','this','that','game','nfl','prediction','market','markets','price','good','bad','think','play','way']);
   return normalizeText(text).split(/\s+/).filter(x => x.length > 2 && !stop.has(x));
+}
+
+function isDiscovery(text = '') {
+  return /find me|something interesting|anything good|what should i|best value|biggest disagreement|where.*disagree|what looks good|show me.*market/i.test(text);
 }
 
 function selectRelevant(rows, text) {
@@ -56,17 +60,23 @@ function selectRelevant(rows, text) {
     }
     const executable = r.bestPrediction ? 2 : 0;
     const comparable = Number.isFinite(r.priceGap) ? 1 : 0;
-    const marketIntent = normalizeText(text).includes('moneyline') && /moneyline|\bml\b/i.test(`${r.marketName} ${r.oddID}`) ? 3 : 0;
-    const spreadIntent = normalizeText(text).includes('spread') && /spread|\bsp\b/i.test(`${r.marketName} ${r.oddID}`) ? 3 : 0;
-    const tdIntent = normalizeText(text).includes('touchdown') && /touchdown|td/i.test(`${r.marketName} ${r.stat} ${r.oddID}`) ? 3 : 0;
-    return { r, score: hits * 8 + sideHits * 5 + executable + comparable + marketIntent + spreadIntent + tdIntent };
+    const norm = normalizeText(text);
+    const marketIntent = norm.includes('moneyline') && /moneyline|\bml\b/i.test(`${r.marketName} ${r.oddID}`) ? 3 : 0;
+    const spreadIntent = norm.includes('spread') && /spread|\bsp\b/i.test(`${r.marketName} ${r.oddID}`) ? 3 : 0;
+    const tdIntent = norm.includes('touchdown') && /touchdown|td/i.test(`${r.marketName} ${r.stat} ${r.oddID}`) ? 3 : 0;
+    return { r, score: hits * 8 + sideHits * 5 + executable + comparable + marketIntent + spreadIntent + tdIntent, hits };
   });
-  const anyHits = scored.some(x => x.score >= 8);
-  return scored
-    .filter(x => !anyHits || x.score >= 8)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 24)
-    .map(x => x.r);
+
+  const directMatches = scored.filter(x => x.hits > 0 || x.score >= 8);
+  if (directMatches.length) {
+    return directMatches.sort((a, b) => b.score - a.score).slice(0, 24).map(x => x.r);
+  }
+
+  if (isDiscovery(text) || tokens.length === 0) {
+    return scored.sort((a, b) => b.score - a.score).slice(0, 24).map(x => x.r);
+  }
+
+  return [];
 }
 
 function cents(p) { return Number.isFinite(p) ? `${(p * 100).toFixed(1)}¢` : '—'; }
@@ -78,6 +88,10 @@ function isGreeting(message) {
 
 function isThanks(message) {
   return /^(thanks|thank you|thx|nice|got it|makes sense|cool|lol|lmao)[!. ]*$/i.test(message.trim());
+}
+
+function isShortFollowup(message = '') {
+  return tokenize(message).length <= 2 && /what about|how about|instead|spread|moneyline|total|over|under|him|it|that/i.test(message);
 }
 
 function quotedPrice(message) {
@@ -96,7 +110,7 @@ function fallbackAnswer(rows, message) {
   if (isThanks(message)) return "Yep. Throw me the next one whenever.";
 
   if (!rows.length) {
-    return `I'm not finding a clean NFL match for that in the feed right now. Try the team/player name, or just give me the price you're seeing and what the bet is.`;
+    return `I'm not seeing that team/player in the live feed right now. If you paste the price you're seeing — like “Chargers 58¢” — I can still sanity-check it against the sportsbook side.`;
   }
 
   const offered = quotedPrice(message);
@@ -108,15 +122,15 @@ function fallbackAnswer(rows, message) {
     let read = 'pretty much fair';
     if (edge >= .02) read = 'pretty good';
     else if (edge <= -.02) read = 'a little expensive';
-    return `${cents(offered)} on ${side} looks ${read} to me. The market/book reference I have is around ${pct(ref)}, so you're about ${Math.abs(edge * 100).toFixed(1)} points ${edge >= 0 ? 'under' : 'over'} that. I wouldn't treat that reference as truth, but it's a solid sanity check.`;
+    return `${cents(offered)} on ${side} looks ${read}. The broader reference is around ${pct(ref)}, so you're about ${Math.abs(edge * 100).toFixed(1)} points ${edge >= 0 ? 'cheaper' : 'richer'} than that. Not gospel, but a useful gut check.`;
   }
 
   const executable = rows.filter(r => r.bestPrediction);
   if (!executable.length) {
     const r = referenceRow || rows[0];
     const side = r.side || r.marketName;
-    const refText = Number.isFinite(r.benchmarkProbability) ? ` The broader price reference has ${side} around ${pct(r.benchmarkProbability)}.` : '';
-    return `I can see the ${r.eventName} market, but this feed isn't giving me a live prediction-market price for it right now.${refText} So I can't honestly call a “best trade” yet. If you paste the price you're seeing — like “Chargers 81¢” — I can tell you if it looks cheap or rich.`;
+    const refText = Number.isFinite(r.benchmarkProbability) ? ` The broader price has ${side} around ${pct(r.benchmarkProbability)}.` : '';
+    return `I can see ${r.eventName}, but I'm not getting a live prediction-market price for ${side} right now.${refText} Send me the price you're seeing and I'll tell you if it looks cheap or rich.`;
   }
 
   const ranked = executable.slice().sort((a, b) => {
@@ -128,12 +142,12 @@ function fallbackAnswer(rows, message) {
   const side = best.side || best.stat || best.marketName;
   const gap = best.priceGap;
 
-  let text = `The best-looking price I can see is ${side} in ${best.eventName} at ${cents(best.bestPrediction.implied)} on ${best.bestPrediction.label}.`;
+  let text = `I'd start with ${side} in ${best.eventName}: ${cents(best.bestPrediction.implied)} on ${best.bestPrediction.label}.`;
   if (Number.isFinite(best.benchmarkProbability) && Number.isFinite(gap)) {
-    text += ` The broader reference is around ${pct(best.benchmarkProbability)}, so you're getting it about ${Math.abs(gap * 100).toFixed(1)} points ${gap >= 0 ? 'cheaper' : 'richer'}.`;
+    text += ` The broader reference is around ${pct(best.benchmarkProbability)}, so that price is about ${Math.abs(gap * 100).toFixed(1)} points ${gap >= 0 ? 'cheaper' : 'richer'}.`;
   }
-  text += ` That's enough for me to say the price is interesting — not enough to pretend we know the true odds.`;
-  if (ranked[1]) text += `\n\nSecond one I'd look at: ${ranked[1].side || ranked[1].marketName} at ${cents(ranked[1].bestPrediction.implied)} on ${ranked[1].bestPrediction.label}.`;
+  text += ` That's the one that jumps out first.`;
+  if (ranked[1]) text += ` Another one worth a look is ${ranked[1].side || ranked[1].marketName} at ${cents(ranked[1].bestPrediction.implied)} on ${ranked[1].bestPrediction.label}.`;
   return text;
 }
 
@@ -152,9 +166,11 @@ async function llmAnswer({ message, history, portfolio, markets }) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
 
-  const system = `You are Giant, the user's personal NFL prediction-market buddy. Talk like a smart friend who knows odds, not a quant terminal and not a compliance memo. Be casual, clear, and concise. Contractions are good. The user trades prediction markets; sportsbooks are reference pricing only.
+  const system = `You are Giant, the user's NFL prediction-market buddy. Talk like a smart friend watching football on the couch, not a quant terminal, financial adviser, or compliance memo. Be casual, useful, and concise. Contractions are good. The user can trade prediction markets; sportsbooks are reference pricing only.
 
-Use only the supplied live market data for prices. Never make up a price, injury, news item, true probability, or edge. A reference probability is just a sanity check, not ground truth. Only compare prices when the supplied data says the line is comparable. If there isn't a live prediction-market quote, say that plainly, but still give useful sportsbook/reference context and invite the user to paste the price they're seeing. If they give you a price in cents, compare its break-even probability to the supplied reference. When asked for the best bet/trade, give at most 1-3 options and explain them in normal language. Avoid words like executable, benchmarkProbability, lineComparable, model edge, or alpha unless the user asks for technical detail. Most answers should be 2-6 sentences.`;
+Use only the supplied live market data for prices. Never invent a market, quote, injury, news item, probability, or edge. If relevant live market data is empty, do not talk about some unrelated game. Just say you aren't seeing that team/player in the feed right now and ask for the price the user sees. A reference probability is a rough sanity check, not truth. Only compare prices when the supplied data says the line is comparable.
+
+When asked for the best way to play a team, compare the relevant moneyline/spread/props you actually have and say which one you'd look at first and why. Keep it in plain English. Do not suggest a dollar stake or bankroll percentage unless the user explicitly asks how much to bet. Mention the user's existing bets only when they are directly relevant to the thing being discussed. Do not over-warn or moralize. Avoid words like executable, benchmarkProbability, lineComparable, model edge, or alpha unless asked. Do not use Markdown formatting or asterisks. Most answers should be 2-5 sentences.`;
 
   const prior = Array.isArray(history)
     ? history.slice(-8).map(x => ({ role: x.role === 'assistant' ? 'assistant' : 'user', content: String(x.content || '').slice(0, 1200) }))
@@ -175,7 +191,7 @@ Use only the supplied live market data for prices. Never make up a price, injury
       instructions: system,
       input,
       reasoning: { effort: 'none' },
-      max_output_tokens: 600
+      max_output_tokens: 500
     })
   });
 
@@ -204,10 +220,11 @@ export async function POST(request) {
     url.searchParams.set('limit', '50');
     const board = await fetchBoard(url);
 
-    const priorUserContext = Array.isArray(body?.history)
-      ? body.history.filter(x => x?.role === 'user').slice(-3).map(x => x.content).join(' ')
-      : '';
-    const relevant = selectRelevant(board.rows || [], `${priorUserContext} ${message}`);
+    let relevant = selectRelevant(board.rows || [], message);
+    if (!relevant.length && isShortFollowup(message) && Array.isArray(body?.history)) {
+      const lastUser = body.history.filter(x => x?.role === 'user').slice(-2).map(x => x.content).join(' ');
+      relevant = selectRelevant(board.rows || [], `${lastUser} ${message}`);
+    }
 
     let answer = null;
     let mode = 'rules';
@@ -221,7 +238,7 @@ export async function POST(request) {
     }
     if (!answer) answer = fallbackAnswer(relevant, message);
 
-    return Response.json({ answer, mode, marketCount: relevant.length, demo: board.demo }, { headers: { 'Cache-Control': 'no-store' } });
+    return Response.json({ answer, mode, marketCount: relevant.length, totalMarketCount: board.rows?.length || 0, demo: board.demo }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     return Response.json({ error: error?.message || 'Failed to answer' }, { status: 500, headers: { 'Cache-Control': 'no-store' } });
   }
