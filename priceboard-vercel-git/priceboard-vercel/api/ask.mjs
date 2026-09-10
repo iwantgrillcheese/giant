@@ -25,13 +25,16 @@ function compactRow(r) {
     referenceLine: r.benchmarkLine,
     sameLine: r.lineComparable,
     priceGap: r.priceGap,
-    quotes: r.quotes.slice(0, 8).map(q => ({ venue: q.label, kind: q.kind, odds: q.odds, probability: q.implied, line: q.line }))
+    quotes: r.quotes.slice(0, 12).map(q => ({ venue: q.label, kind: q.kind, odds: q.odds, probability: q.implied, line: q.line }))
   };
 }
 
 function normalizeText(text = '') {
   return String(text)
     .toLowerCase()
+    .replace(/\bpats\b/g, ' patriots ')
+    .replace(/\bniners\b/g, ' 49ers ')
+    .replace(/\bbolts\b/g, ' chargers ')
     .replace(/\btd\b/g, ' touchdown ')
     .replace(/\bml\b/g, ' moneyline ')
     .replace(/[^a-z0-9.+%¢-]/g, ' ')
@@ -47,11 +50,16 @@ function tokenize(text = '') {
 const contextNoise = new Set([
   'moneyline','spread','total','over','under','touchdown','odds','line','lines','prop','props',
   'who','they','them','their','there','he','him','his','she','her','it','its','opponent','matchup',
-  'playing','plays','played','said','just','again','current','right','now','next','week','same','one'
+  'playing','plays','played','said','just','again','current','right','now','next','week','same','one',
+  'live','quote','quotes','check','audit','position','positions','ticket','tickets','first','anytime','both','win','wins'
 ]);
 
 function hasIdentitySignal(text = '') {
   return tokenize(text).some(t => !contextNoise.has(t));
+}
+
+function strongIdentityTokens(text = '') {
+  return tokenize(text).filter(t => !contextNoise.has(t) && /[a-z]/i.test(t));
 }
 
 function isDiscovery(text = '') {
@@ -62,10 +70,33 @@ function isSlateRequest(text = '') {
   return /all nfl.*lines|all.*nfl.*games|what nfl games|show me.*nfl|full slate|whole slate|all game lines/i.test(text);
 }
 
+function isPortfolioQuoteRequest(text = '') {
+  return /live quotes?|get.*quotes?|quote.*bets?|price.*bets?|check.*bets?|audit.*bets?|my bets|my positions|my tickets|outstanding bets/i.test(text);
+}
+
+function rowHaystack(r) {
+  const quoteText = (r.quotes || []).map(q => `${q.label || ''} ${q.kind || ''} ${q.line ?? ''}`).join(' ');
+  return normalizeText(`${r.eventName} ${r.marketName} ${r.side} ${r.stat} ${r.oddID} ${r.line ?? ''} ${r.referenceLine ?? ''} ${quoteText}`);
+}
+
+function marketIntentScore(row, text) {
+  const norm = normalizeText(text);
+  const hay = normalizeText(`${row.marketName} ${row.stat} ${row.oddID}`);
+  let score = 0;
+  if (norm.includes('moneyline') && /moneyline|\bml\b/.test(hay)) score += 8;
+  if (norm.includes('spread') && /spread|\bsp\b/.test(hay)) score += 8;
+  if ((norm.includes('touchdown') || norm.includes('first touchdown')) && /touchdown|td/.test(hay)) score += 8;
+  if (norm.includes('first touchdown') && /first|1st/.test(hay)) score += 6;
+  if (norm.includes('anytime touchdown') && /anytime/.test(hay)) score += 6;
+  if (norm.includes('over') && normalizeText(row.side || '').includes('over')) score += 5;
+  if (norm.includes('under') && normalizeText(row.side || '').includes('under')) score += 5;
+  return score;
+}
+
 function selectRelevant(rows, text) {
   const tokens = tokenize(text);
   const scored = rows.map(r => {
-    const hay = normalizeText(`${r.eventName} ${r.marketName} ${r.side} ${r.stat} ${r.oddID}`);
+    const hay = rowHaystack(r);
     const side = normalizeText(r.side || '');
     let hits = 0;
     let sideHits = 0;
@@ -75,23 +106,72 @@ function selectRelevant(rows, text) {
     }
     const executable = r.bestPrediction ? 2 : 0;
     const comparable = Number.isFinite(r.priceGap) ? 1 : 0;
-    const norm = normalizeText(text);
-    const marketIntent = norm.includes('moneyline') && /moneyline|\bml\b/i.test(`${r.marketName} ${r.oddID}`) ? 3 : 0;
-    const spreadIntent = norm.includes('spread') && /spread|\bsp\b/i.test(`${r.marketName} ${r.oddID}`) ? 3 : 0;
-    const tdIntent = norm.includes('touchdown') && /touchdown|td/i.test(`${r.marketName} ${r.stat} ${r.oddID}`) ? 3 : 0;
-    return { r, score: hits * 8 + sideHits * 5 + executable + comparable + marketIntent + spreadIntent + tdIntent, hits };
+    const intent = marketIntentScore(r, text);
+    return { r, score: hits * 8 + sideHits * 5 + executable + comparable + intent, hits };
   });
 
   const directMatches = scored.filter(x => x.hits > 0 || x.score >= 8);
   if (directMatches.length) {
-    return directMatches.sort((a, b) => b.score - a.score).slice(0, 30).map(x => x.r);
+    return directMatches.sort((a, b) => b.score - a.score).slice(0, 40).map(x => x.r);
   }
 
   if (isDiscovery(text) || tokens.length === 0) {
-    return scored.sort((a, b) => b.score - a.score).slice(0, 30).map(x => x.r);
+    return scored.sort((a, b) => b.score - a.score).slice(0, 40).map(x => x.r);
   }
 
   return [];
+}
+
+function selectForBet(rows, description) {
+  const strong = strongIdentityTokens(description);
+  if (!strong.length) return [];
+  const tokens = tokenize(description);
+
+  return rows.map(r => {
+    const hay = rowHaystack(r);
+    const side = normalizeText(r.side || '');
+    let strongHits = 0;
+    let tokenHits = 0;
+    let sideHits = 0;
+    for (const t of tokens) {
+      if (hay.includes(t)) tokenHits += 1;
+      if (side.includes(t)) sideHits += 1;
+    }
+    for (const t of strong) if (hay.includes(t)) strongHits += 1;
+    const exactLine = r.line != null && normalizeText(description).includes(normalizeText(String(r.line))) ? 5 : 0;
+    const score = strongHits * 16 + tokenHits * 4 + sideHits * 5 + marketIntentScore(r, description) + exactLine + (r.bestPrediction ? 2 : 0);
+    return { r, strongHits, score };
+  })
+    .filter(x => x.strongHits > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 8)
+    .map(x => x.r);
+}
+
+function auditPortfolio(rows, portfolio) {
+  const positions = Array.isArray(portfolio?.positions)
+    ? portfolio.positions.filter(p => !p?.result || p.result === 'open').slice(-25)
+    : [];
+  const searches = [];
+  const selected = [];
+
+  for (const position of positions) {
+    const bet = String(position?.description || '').trim();
+    if (!bet) continue;
+    const matches = selectForBet(rows, bet);
+    searches.push({
+      bet,
+      venue: position?.venue || '',
+      stake: Number(position?.stake || 0),
+      toWin: Number(position?.toWin || 0),
+      matchCount: matches.length,
+      matches: matches.slice(0, 5).map(compactRow)
+    });
+    selected.push(...matches);
+  }
+
+  const deduped = [...new Map(selected.map(r => [r.oddID || `${r.eventName}:${r.marketName}:${r.side}:${r.line}`, r])).values()];
+  return { rows: deduped.slice(0, 80), searches };
 }
 
 function conversationContext(rows, history = []) {
@@ -200,7 +280,7 @@ function extractText(response) {
   return parts.join('\n').trim();
 }
 
-async function llmAnswer({ message, history, portfolio, markets }) {
+async function llmAnswer({ message, history, portfolio, markets, portfolioSearches }) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
 
@@ -208,9 +288,11 @@ async function llmAnswer({ message, history, portfolio, markets }) {
 
 This is a real conversation, so keep track of what the user and Giant were just talking about. Resolve follow-ups like “what's the moneyline?”, “what about the spread?”, “him?”, “that one?”, and “who do they play?” from the recent conversation. Do not randomly switch to a different team or game. If you previously established a matchup and the CURRENT supplied data still supports it, stay consistent.
 
-Use only the CURRENT supplied live market data for factual claims about matchup/opponent, start time, prices, and market availability. Conversation history is for reference resolution and continuity, not a source of live facts. Never use model memory to invent an NFL schedule, opponent, quote, injury, news item, probability, or edge. If history conflicts with the current data, current data wins and you should say so plainly. If current live data includes the team/game being discussed, never say you cannot see it. Direct Kalshi prices are real prediction-market prices and can be discussed even when no sportsbook reference is available. If relevant live market data is empty, do not talk about some unrelated game. A reference probability is a rough sanity check, not truth. Only compare prices when the supplied data says the line is comparable.
+Use only the CURRENT supplied live market data for factual claims about matchup/opponent, start time, prices, and market availability. Conversation history is for reference resolution and continuity, not a source of live facts. Never use model memory to invent an NFL schedule, opponent, quote, injury, news item, probability, or edge. If history conflicts with the current data, current data wins and you should say so plainly. If current live data includes the team/game being discussed, never say you cannot see it. Direct Kalshi prices are real prediction-market prices and can be discussed even when no sportsbook reference is available. A reference probability is a rough sanity check, not truth. Only compare prices when the supplied data says the line is comparable.
 
-When asked for the best way to play a team, compare the relevant moneyline/spread/props you actually have and say which one you'd look at first and why. Keep it in plain English. Do not suggest a dollar stake or bankroll percentage unless the user explicitly asks how much to bet. Mention the user's existing bets only when they are directly relevant to the thing being discussed. Do not over-warn or moralize. Avoid words like executable, benchmarkProbability, lineComparable, model edge, or alpha unless asked. Do not use Markdown formatting or asterisks. Most answers should be 2-5 sentences.`;
+When PORTFOLIO SEARCH RESULTS are supplied, they are the result of a dedicated search for each open ticket. Treat each ticket separately. Never use a different player, matchup, or bet type as an equivalent quote. If a ticket has matches, use those matches instead of claiming the feed cannot find it. If a ticket has zero matches, say that ticket is unmatched rather than substituting a vaguely similar market. Giant currently searches NFL only, so non-NFL tickets can be called unsupported instead of pretending they were searched successfully.
+
+When asked for the best way to play a team, compare the relevant moneyline/spread/props you actually have and say which one you'd look at first and why. Keep it in plain English. Do not suggest a dollar stake or bankroll percentage unless the user explicitly asks how much to bet. Mention the user's existing bets only when they are directly relevant to the thing being discussed. Do not over-warn or moralize. Avoid words like executable, benchmarkProbability, lineComparable, model edge, or alpha unless asked. Do not use Markdown formatting or asterisks. Most answers should be 2-6 sentences unless the user explicitly asks to audit multiple bets.`;
 
   let prior = Array.isArray(history)
     ? history
@@ -223,11 +305,11 @@ When asked for the best way to play a team, compare the relevant moneyline/sprea
   }
 
   const positions = Array.isArray(portfolio?.positions)
-    ? portfolio.positions.slice(-20).map(p => ({ bet: p.description, venue: p.venue, stake: p.stake, toWin: p.toWin, result: p.result }))
+    ? portfolio.positions.slice(-25).map(p => ({ bet: p.description, venue: p.venue, stake: p.stake, toWin: p.toWin, result: p.result }))
     : [];
   const input = [
     ...prior,
-    { role: 'user', content: `Current request: ${message}\n\nUser's book:\n${JSON.stringify({ bankroll: portfolio?.bankroll || 0, inPlay: portfolio?.exposure || 0, pnl: portfolio?.realized || 0, openBets: portfolio?.openCount || 0, positions })}\n\nCURRENT relevant live market data:\n${JSON.stringify(markets.map(compactRow))}` }
+    { role: 'user', content: `Current request: ${message}\n\nUser's book:\n${JSON.stringify({ bankroll: portfolio?.bankroll || 0, inPlay: portfolio?.exposure || 0, pnl: portfolio?.realized || 0, openBets: portfolio?.openCount || 0, positions })}\n\nPORTFOLIO SEARCH RESULTS:\n${JSON.stringify(portfolioSearches || null)}\n\nCURRENT relevant live market data:\n${JSON.stringify(markets.map(compactRow))}` }
   ];
 
   const r = await fetch('https://api.openai.com/v1/responses', {
@@ -238,7 +320,7 @@ When asked for the best way to play a team, compare the relevant moneyline/sprea
       instructions: system,
       input,
       reasoning: { effort: 'none' },
-      max_output_tokens: 500
+      max_output_tokens: 700
     })
   });
 
@@ -274,9 +356,16 @@ export async function POST(request) {
     const kalshi = kalshiResult.status === 'fulfilled' ? kalshiResult.value : { rows: [] };
     const allRows = [...(kalshi.rows || []), ...(board.rows || [])];
 
+    const portfolioRequest = isPortfolioQuoteRequest(message);
+    let portfolioSearches = null;
     let relevant;
+
     if (isSlateRequest(message)) {
-      relevant = allRows.slice(0, 60);
+      relevant = allRows.slice(0, 80);
+    } else if (portfolioRequest) {
+      const audit = auditPortfolio(allRows, body?.portfolio);
+      relevant = audit.rows;
+      portfolioSearches = audit.searches;
     } else if (!hasIdentitySignal(message)) {
       const context = conversationContext(allRows, body?.history);
       relevant = context ? selectRelevant(context.rows, message) : selectRelevant(allRows, message);
@@ -284,7 +373,7 @@ export async function POST(request) {
       relevant = selectRelevant(allRows, message);
     }
 
-    if (!relevant.length && Array.isArray(body?.history)) {
+    if (!relevant.length && !portfolioRequest && Array.isArray(body?.history)) {
       const recentConversation = body.history
         .slice(-8)
         .map(x => String(x?.content || ''))
@@ -293,7 +382,7 @@ export async function POST(request) {
       relevant = selectRelevant(allRows, `${recentConversation} ${message}`);
     }
 
-    if (!relevant.length && isShortFollowup(message) && Array.isArray(body?.history)) {
+    if (!relevant.length && !portfolioRequest && isShortFollowup(message) && Array.isArray(body?.history)) {
       const lastUser = body.history.filter(x => x?.role === 'user').slice(-2).map(x => x.content).join(' ');
       relevant = selectRelevant(allRows, `${lastUser} ${message}`);
     }
@@ -302,7 +391,7 @@ export async function POST(request) {
     let mode = 'rules';
     if (process.env.OPENAI_API_KEY) {
       try {
-        answer = await llmAnswer({ message, history: body?.history, portfolio: body?.portfolio, markets: relevant });
+        answer = await llmAnswer({ message, history: body?.history, portfolio: body?.portfolio, markets: relevant, portfolioSearches });
         if (answer) mode = 'llm';
       } catch (error) {
         console.error('Giant LLM error:', error?.message || error);
@@ -315,6 +404,9 @@ export async function POST(request) {
       mode,
       marketCount: relevant.length,
       totalMarketCount: allRows.length,
+      sourceEventCount: board.sourceEventCount || 0,
+      sourcePagesFetched: board.pagesFetched || 0,
+      portfolioSearchCount: portfolioSearches?.length || 0,
       kalshiMarketCount: kalshi.rows?.length || 0,
       kalshiEventCount: kalshi.eventCount || 0,
       demo: board.demo,
