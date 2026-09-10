@@ -262,11 +262,31 @@ function demoPayload(league = 'NFL') {
   };
 }
 
+async function fetchSportsGameOddsPage(endpoint, apiKey, cursor = '') {
+  const pageUrl = new URL(endpoint);
+  if (cursor) pageUrl.searchParams.set('cursor', cursor);
+
+  const response = await fetch(pageUrl, {
+    headers: { 'x-api-key': apiKey, accept: 'application/json' }
+  });
+
+  const text = await response.text();
+  let payload;
+  try { payload = JSON.parse(text); } catch { payload = { error: text }; }
+
+  if (response.status === 404 && cursor) return { data: [], nextCursor: null, end: true };
+  if (!response.ok || payload?.success === false) {
+    throw new Error(payload?.error || `SportsGameOdds returned ${response.status}`);
+  }
+  return payload;
+}
+
 export async function fetchBoard(url) {
   const league = (url.searchParams.get('league') || 'NFL').toUpperCase();
   const live = url.searchParams.get('live') === 'true';
+  const includeAltLines = url.searchParams.get('includeAltLines') === 'true';
   const requestedLimit = Math.max(1, Number(url.searchParams.get('limit') || 100));
-  const limit = Math.min(500, Math.max(100, requestedLimit));
+  const limit = Math.min(300, Math.max(25, requestedLimit));
   const apiKey = process.env.SPORTSGAMEODDS_API_KEY || '';
 
   if (!apiKey) {
@@ -278,8 +298,8 @@ export async function fetchBoard(url) {
   endpoint.searchParams.set('leagueID', league);
   endpoint.searchParams.set('type', 'match');
   endpoint.searchParams.set('limit', String(limit));
-  endpoint.searchParams.set('includeAltLines', 'true');
   endpoint.searchParams.set('cancelled', 'false');
+  if (includeAltLines) endpoint.searchParams.set('includeAltLines', 'true');
 
   if (live) {
     endpoint.searchParams.set('live', 'true');
@@ -293,25 +313,29 @@ export async function fetchBoard(url) {
     endpoint.searchParams.set('startsBefore', new Date(now + 14 * 24 * 60 * 60 * 1000).toISOString());
   }
 
-  const response = await fetch(endpoint, {
-    headers: { 'x-api-key': apiKey, accept: 'application/json' }
-  });
+  const events = [];
+  let cursor = '';
+  let pagesFetched = 0;
 
-  const text = await response.text();
-  let payload;
-  try { payload = JSON.parse(text); } catch { payload = { error: text }; }
-
-  if (!response.ok || payload?.success === false) {
-    throw new Error(payload?.error || `SportsGameOdds returned ${response.status}`);
+  for (let page = 0; page < 10; page++) {
+    const payload = await fetchSportsGameOddsPage(endpoint, apiKey, cursor);
+    pagesFetched += 1;
+    if (Array.isArray(payload?.data)) events.push(...payload.data);
+    const next = payload?.nextCursor || '';
+    if (!next || next === cursor || payload?.end) break;
+    cursor = next;
   }
 
+  const dedupedEvents = [...new Map(events.map((event, index) => [event?.eventID || event?.id || `event-${index}`, event])).values()];
+
   return {
-    rows: normalizeEvents(payload),
+    rows: normalizeEvents({ data: dedupedEvents }),
     demo: false,
     provider: 'SportsGameOdds',
     league,
-    sourceEventCount: Array.isArray(payload?.data) ? payload.data.length : 0,
-    nextCursor: payload?.nextCursor || null
+    sourceEventCount: dedupedEvents.length,
+    pagesFetched,
+    nextCursor: cursor || null
   };
 }
 
